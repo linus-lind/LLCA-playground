@@ -1,0 +1,7 @@
+name: "walk_forward"
+train_size: 630
+val_size: 126
+test_size: 252
+purge_size: ${model.sequence_length}
+step_size: ${split.test_size}
+lookback: ${model.sequence_length}

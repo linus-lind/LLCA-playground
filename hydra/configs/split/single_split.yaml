@@ -1,0 +1,6 @@
+name: "single_split"
+train_size: 4250
+val_size: 504
+test_size: 1008
+purge_size: ${model.sequence_length}
+lookback: ${model.sequence_length}

@@ -1,0 +1,41 @@
+default_stages: [pre-commit]
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: \.ipynb$
+      - id: end-of-file-fixer
+        exclude: \.ipynb$
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-case-conflict
+      - id: check-added-large-files
+      - id: debug-statements
+      - id: mixed-line-ending
+        args: [--fix=lf]
+
+  - repo: local
+    hooks:
+      - id: ruff
+        name: ruff (lint, auto-fix)
+        entry: bash -c 'if [ -x .venv/Scripts/ruff.exe ]; then .venv/Scripts/ruff.exe check --fix "$@"; else .venv/bin/ruff check --fix "$@"; fi' --
+        language: system
+        types_or: [python, pyi]
+        require_serial: true
+
+      - id: mypy
+        name: mypy (strict, src/llca)
+        entry: bash -c 'if [ -x .venv/Scripts/mypy.exe ]; then .venv/Scripts/mypy.exe src/llca; else .venv/bin/mypy src/llca; fi'
+        language: system
+        types: [python]
+        pass_filenames: false
+
+      - id: dvc-push
+        name: dvc push (data for committed .dvc pointers)
+        entry: bash -c 'if [ -x .venv/Scripts/python.exe ]; then .venv/Scripts/python.exe -m dvc push; elif [ -x .venv/bin/python ]; then .venv/bin/python -m dvc push; fi'
+        language: system
+        stages: [pre-push]
+        pass_filenames: false

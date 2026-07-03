@@ -1,0 +1,23 @@
+models:
+  - name: ${experiment_name}
+    version: 1
+    label: "${experiment_name}"
+device: "auto"
+annualization_periods: ${trading_year}
+return_type: "log"
+signal_buckets: 10
+probability_bins: 10
+classification_threshold: 0.5
+target_threshold: 0.0
+risk_free_rate: 0.0
+minimum_acceptable_return: 0.0
+var_levels: [0.95, 0.99]
+rolling_window: 63
+signal_decay_periods: [0, 1, 5, 10, 21, 63]
+active_weight_threshold: 0.0001
+include_initial_trade: true
+show_plots: true
+evaluation_end: null
+output_dir: "reports/analytics"
+table_formats: ["png"]
+table_dpi: 300

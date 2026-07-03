@@ -1,0 +1,64 @@
+daily_values:
+  - { name: "log_change", column: "close", horizon: 1, as: "cc_return" }
+  - { name: "log_ratio", numerator: "close", denominator: "open", as: "oc_return" }
+  - { name: "log_difference", current: "open", previous: "close", as: "co_return" }
+  - { name: "log_ratio", numerator: "high", denominator: "low", as: "high_low_range" }
+  - { name: "range_location", high: "high", low: "low", value: "close", as: "close_location" }
+  - { name: "log_change", column: "volume", horizon: 1, as: "volume_change" }
+  - { name: "log_change", column: "volume", times: "close", horizon: 1, as: "dollar_volume_change" }
+  - { name: "ratio", numerator: "volume", denominator: "shares_outstanding", as: "turnover" }
+
+firm_characteristics:
+  # Profitability
+  - { name: "ratio", numerator: "net_income_quarterly", denominator: "total_assets_quarterly", as: "return_on_assets" }
+  - { name: "ratio", numerator: "net_income_quarterly", denominator: "common_equity_quarterly", as: "return_on_equity" }
+  - { name: "ratio", numerator: "net_income_quarterly", denominator: "net_sales_quarterly", as: "net_margin" }
+  - { name: "ratio", numerator: "operating_income_after_depreciation_quarterly", denominator: "net_sales_quarterly", as: "operating_margin" }
+  - { name: "ratio", numerator: "operating_income_before_depreciation_quarterly", denominator: "net_sales_quarterly", as: "ebitda_margin" }
+  - { name: "ratio", numerator: "cost_of_goods_sold_quarterly", denominator: "net_sales_quarterly", as: "cogs_to_sales" }
+  # Efficiency / activity
+  - { name: "ratio", numerator: "net_sales_quarterly", denominator: "total_assets_quarterly", as: "asset_turnover" }
+  - { name: "ratio", numerator: "total_receivables_quarterly", denominator: "net_sales_quarterly", as: "receivables_to_sales" }
+  - { name: "ratio", numerator: "inventories_quarterly", denominator: "total_assets_quarterly", as: "inventory_to_assets" }
+  # Leverage / solvency / liquidity
+  - { name: "ratio", numerator: "total_liabilities_quarterly", denominator: "total_assets_quarterly", as: "leverage" }
+  - { name: "ratio", numerator: "long_term_debt_quarterly", denominator: "total_assets_quarterly", as: "long_term_debt_ratio" }
+  - { name: "ratio", numerator: "current_assets_quarterly", denominator: "current_liabilities_quarterly", as: "current_ratio" }
+  - { name: "ratio", numerator: "cash_short_term_investments_quarterly", denominator: "total_assets_quarterly", as: "cash_to_assets" }
+  - { name: "ratio", numerator: "operating_income_after_depreciation_annual", denominator: "interest_expense_total_annual", as: "interest_coverage" }
+  # Investment / intensity
+  - { name: "ratio", numerator: "research_development_expense_quarterly", denominator: "net_sales_quarterly", as: "rd_intensity" }
+  - { name: "ratio", numerator: "selling_general_admin_expense_quarterly", denominator: "net_sales_quarterly", as: "sga_intensity" }
+  - { name: "ratio", numerator: "capital_expenditures_annual", denominator: "total_assets_annual", as: "capex_intensity" }
+  - { name: "ratio", numerator: "common_dividends_annual", denominator: "net_income_annual", as: "dividend_payout" }
+  # Valuation (fundamental / market value)
+  - { name: "ratio", numerator: "net_income_quarterly", denominator: "market_value_total_quarter_end", as: "earnings_yield" }
+  - { name: "ratio", numerator: "common_equity_quarterly", denominator: "market_value_total_quarter_end", as: "book_to_market" }
+  - { name: "ratio", numerator: "net_sales_quarterly", denominator: "market_value_total_quarter_end", as: "sales_to_price" }
+  # Growth: year-over-year (4 quarters) log-change on the densely-populated
+  # quarterly levels, which avoids seasonality and the sparsity of annual rows.
+  - { name: "log_change", column: "net_sales_quarterly", horizon: 4, as: "revenue_growth" }
+  - { name: "log_change", column: "total_assets_quarterly", horizon: 4, as: "asset_growth" }
+  - { name: "log_change", column: "common_equity_quarterly", horizon: 4, as: "equity_growth" }
+
+macro:
+  - { name: "log_change", column: "sp500_price_index", horizon: 1, as: "market_return" }
+  - { name: "log_change", column: "dxy", horizon: 1, as: "dollar_return" }
+  - { name: "log_change", column: "cpi", horizon: "${trading_year}", as: "inflation_yoy" }
+  - { name: "log_change", column: "us_personal_consumption", horizon: "${trading_year}", as: "consumption_yoy" }
+  - { name: "log_change", column: "nonfarm_employment", horizon: "${trading_year}", as: "employment_yoy" }
+  - { name: "log_change", column: "fed_total_assets", horizon: "${trading_year}", as: "fed_assets_yoy" }
+  - { name: "ratio", numerator: "nyse_advancing_volume", denominator: "nyse_declining_volume", as: "advance_decline_ratio" }
+  - { name: "passthrough", column: "nfci", as: "nfci" }
+  - { name: "passthrough", column: "nfci_adjusted", as: "nfci_adjusted" }
+  - { name: "passthrough", column: "stl_fin_stress_index", as: "financial_stress" }
+  - { name: "passthrough", column: "vix", as: "vix" }
+  - { name: "passthrough", column: "move", as: "move" }
+  - { name: "passthrough", column: "baa10y_spread", as: "credit_spread" }
+  - { name: "passthrough", column: "tips_10y_yield", as: "real_yield" }
+  - { name: "passthrough", column: "aaii_bullish", as: "aaii_bullish" }
+  - { name: "passthrough", column: "aaii_bearish", as: "aaii_bearish" }
+  - { name: "passthrough", column: "umich_consumer_sentiment", as: "consumer_sentiment" }
+
+loss:
+  - { name: "log_change", column: "open", horizon: 1, shift: -2, as: "fwd_return" }

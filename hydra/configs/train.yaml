@@ -1,0 +1,28 @@
+defaults:
+  - data: "fmg-ctcst"
+  - preprocessing: "fmg-ctcst"
+  - features: "fmg-ctcst"
+  - masking: "fmg-ctcst"
+  - loss: "portfolio"
+  - model: "fmg-ctct-2"
+  - training: "default"
+  - recovery: "off"
+  - split: "single_split"
+  - _self_
+
+experiment_name: "fmg-ctct-2"
+mlflow_tracking_uri: "sqlite:///mlflow.db"
+
+calendar: "XNYS"
+missing_threshold: 0.05
+membership_columns: ["membership_start", "membership_end"]
+trading_year: 252
+
+hydra:
+  run:
+    dir: hydra/outputs/${experiment_name}/${now:%Y-%m-%d_%H-%M-%S}
+  sweep:
+    dir: hydra/multirun/${experiment_name}/${now:%Y-%m-%d_%H-%M-%S}
+    subdir: ${hydra.job.num}
+  job:
+    chdir: false
