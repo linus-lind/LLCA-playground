@@ -10,6 +10,7 @@ from typing import ClassVar
 import torch
 from torch import Tensor
 
+from llca.pipeline.contracts import TrainingEngine
 from llca.training.reproducibility import configure_determinism, seed_everything
 
 
@@ -113,6 +114,14 @@ class TrainingConfig:
     optimizer: OptimizerConfig
     early_stopping: EarlyStoppingConfig
     diagnostics: TrainingDiagnosticsConfig
+
+    @property
+    def engine(self) -> TrainingEngine:
+        return TrainingEngine.TORCH
+
+    @property
+    def tracking_interval(self) -> int:
+        return self.diagnostics.interval
 
     def tracking_parameters(self) -> dict[str, str | int | float | bool]:
         """Flatten the effective training configuration into comparable MLflow params."""

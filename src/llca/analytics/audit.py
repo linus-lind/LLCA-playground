@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import UTC, datetime
 from pathlib import Path
@@ -13,7 +14,8 @@ from omegaconf import DictConfig, OmegaConf
 from llca.analytics.comparison import ComparisonEvaluation
 from llca.analytics.reporting import PublicationReport
 from llca.analytics.utils.registered_model_metadata import RegisteredModelMetadata
-from llca.training.recovery import SOURCE_FINGERPRINT_TAG, source_fingerprint
+from llca.training.manifests import build_environment_manifest
+from llca.training.manifests.source import SOURCE_FINGERPRINT_TAG, source_fingerprint
 from llca.utils.utils import git_commit, git_dirty
 
 ANALYTICS_MANIFEST_SCHEMA_VERSION = 1
@@ -24,6 +26,7 @@ def build_analytics_manifest(
     config: DictConfig,
     metadata: tuple[RegisteredModelMetadata, ...],
     comparison: ComparisonEvaluation,
+    report: PublicationReport,
 ) -> dict[str, Any]:
     """Describe one evaluation independently from every model's training manifest."""
     analytics = cast(dict[str, Any], OmegaConf.to_container(config.analytics, resolve=True))
@@ -55,7 +58,30 @@ def build_analytics_manifest(
             "git_dirty": dirty,
             "sha256": source_fingerprint(),
         },
+        "environment": build_environment_manifest(),
+        "report": {
+            "files": [
+                {
+                    "path": path.relative_to(report.directory).as_posix(),
+                    "size_bytes": path.stat().st_size,
+                    "sha256": _sha256(path),
+                }
+                for path in sorted(
+                    (path for paths in report.artifacts.values() for path in paths),
+                    key=lambda path: path.as_posix(),
+                )
+            ]
+        },
     }
+
+
+def _sha256(path: Path) -> str:
+    """Hash one report artifact without loading publication figures into memory."""
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        while chunk := stream.read(8 * 1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def log_analytics_report(
@@ -73,9 +99,7 @@ def log_analytics_report(
     )
     mlflow.set_tracking_uri(tracking_uri)
     experiment = mlflow.set_experiment(experiment_name)
-    model_refs = ",".join(
-        f"{model['name']}:{model['version']}" for model in manifest["models"]
-    )
+    model_refs = ",".join(f"{model['name']}:{model['version']}" for model in manifest["models"])
     tags = {
         "llca.run_kind": "analytics",
         "llca.model_versions": model_refs,

@@ -65,21 +65,24 @@ def _simple_change(panel: pd.DataFrame, spec: DictConfig) -> pd.Series:
 def _log_difference(panel: pd.DataFrame, spec: DictConfig) -> pd.Series:
     """Compute ``log(current[t]) - log(previous[t-1])`` without crossing entities."""
     current, previous = spec.current, spec.previous
-
-    def compute(df: pd.DataFrame) -> pd.Series:
-        values = log_difference(
-            df[current].to_numpy(dtype=float), df[previous].to_numpy(dtype=float)
-        )
-        return pd.Series(values, index=df.index)
-
-    frame = panel[[current, previous]]
     entity = entity_level(panel)
-    grouped = (
-        compute(frame)
+    values = np.full(len(panel), np.nan, dtype=float)
+    groups = (
+        [np.arange(len(panel), dtype=int)]
         if entity is None
-        else frame.groupby(level=entity, group_keys=False).apply(compute)
+        else panel.groupby(level=entity, sort=False).indices.values()
     )
-    return cast(pd.Series, grouped).rename(f"log_difference_{current}_{previous}")
+    for positions in groups:
+        rows = np.asarray(positions, dtype=int)
+        values[rows] = log_difference(
+            panel.iloc[rows][current].to_numpy(dtype=float),
+            panel.iloc[rows][previous].to_numpy(dtype=float),
+        )
+    return pd.Series(
+        values,
+        index=panel.index,
+        name=f"log_difference_{current}_{previous}",
+    )
 
 
 @feature_registry.register("log_ratio", columns=[ColumnRef("numerator"), ColumnRef("denominator")])
@@ -168,7 +171,9 @@ def build_features(specs: ListConfig | None, panel: pd.DataFrame) -> pd.DataFram
                 f"duplicate feature output name '{name}'; give each feature a unique 'as'"
             )
         columns[name] = series
-    return pd.DataFrame(columns, index=panel.index)
+    result = pd.DataFrame(columns, index=panel.index)
+    result.attrs.update(panel.attrs)
+    return result
 
 
 def build_feature_panels(features_cfg: DictConfig | None, datasets: Panels) -> Panels:

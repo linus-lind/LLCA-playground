@@ -2,21 +2,25 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import cast
+from typing import Any
 
 import mlflow
 import pandas as pd
-import torch
 from mlflow import MlflowClient
 from mlflow.exceptions import MlflowException
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import OmegaConf
 
 from llca.analytics.utils.config import RegisteredModelConfig
+from llca.analytics.utils.manifest_compatibility import (
+    canonical_data_manifest,
+    canonical_training_manifest,
+)
 from llca.analytics.utils.registered_model_metadata import RegisteredModelMetadata
 from llca.core.artifacts import (
-    LEGACY_PIPELINE_CONFIG_ARTIFACT,
+    DATA_MANIFEST_ARTIFACT,
     TRAINING_MANIFEST_ARTIFACT,
 )
+from llca.data.versioning import DataVersioningError
 from llca.models.estimators.estimator import Estimator
 
 
@@ -34,50 +38,35 @@ def _required_date_tag(tags: dict[str, str], name: str) -> pd.Timestamp:
 def get_registered_model_metadata(
     config: RegisteredModelConfig,
     tracking_uri: str,
-    fallback_config: DictConfig | None = None,
 ) -> RegisteredModelMetadata:
     """Read model-version tags cheaply before deciding the common comparison window."""
     mlflow.set_tracking_uri(tracking_uri)
     client = MlflowClient()
     version = client.get_model_version(config.name, str(config.version))
     tags = dict(version.tags or {})
-    configured_artifact = tags.get("training_manifest_artifact") or tags.get(
-        "pipeline_config_artifact"
-    )
-    artifacts = tuple(
-        dict.fromkeys(
-            filter(
-                None,
-                (
-                    configured_artifact,
-                    TRAINING_MANIFEST_ARTIFACT,
-                    LEGACY_PIPELINE_CONFIG_ARTIFACT,
-                ),
-            )
-        )
-    )
-    pipeline_config: DictConfig | None = None
-    for artifact in artifacts:
-        try:
-            local_config = client.download_artifacts(str(version.run_id), artifact)
-            pipeline_config = cast(
-                DictConfig,
-                OmegaConf.create(json.loads(Path(local_config).read_text(encoding="utf-8"))),
-            )
-            break
-        except (MlflowException, FileNotFoundError, json.JSONDecodeError):
-            continue
-    if pipeline_config is None:
-        if fallback_config is None:
-            raise ValueError(
-                f"registered model {config.name}/{config.version} has no readable "
-                "training manifest artifact"
-            ) from None
-        pipeline_config = cast(
-            DictConfig,
-            OmegaConf.create(OmegaConf.to_container(fallback_config, resolve=True)),
-        )
-    assert pipeline_config is not None
+    try:
+        local_config = client.download_artifacts(str(version.run_id), TRAINING_MANIFEST_ARTIFACT)
+        loaded_config = json.loads(Path(local_config).read_text(encoding="utf-8"))
+        pipeline_config = OmegaConf.create(canonical_training_manifest(loaded_config))
+    except (MlflowException, FileNotFoundError, json.JSONDecodeError, ValueError) as exc:
+        raise ValueError(
+            f"registered model {config.name}/{config.version} has an invalid canonical "
+            f"training manifest: {exc}"
+        ) from exc
+    try:
+        local_manifest = client.download_artifacts(str(version.run_id), DATA_MANIFEST_ARTIFACT)
+        loaded_manifest = json.loads(Path(local_manifest).read_text(encoding="utf-8"))
+        data_manifest = canonical_data_manifest(loaded_manifest)
+    except (
+        MlflowException,
+        FileNotFoundError,
+        json.JSONDecodeError,
+        DataVersioningError,
+    ) as exc:
+        raise ValueError(
+            f"registered model {config.name}/{config.version} has an invalid canonical "
+            f"data manifest: {exc}"
+        ) from exc
     return RegisteredModelMetadata(
         config=config,
         run_id=str(version.run_id),
@@ -85,13 +74,14 @@ def get_registered_model_metadata(
         test_start=_required_date_tag(tags, "test_start"),
         test_end=_required_date_tag(tags, "test_end"),
         pipeline_config=pipeline_config,
+        data_manifest=data_manifest,
     )
 
 
 def load_registered_estimator(
     metadata: RegisteredModelMetadata,
     device_name: str,
-) -> Estimator:
+) -> Estimator[Any]:
     """Load any estimator logged through LLCA's generic MLflow PyFunc contract.
 
     Models are intentionally loaded one at a time by the comparison runner so several
@@ -105,8 +95,5 @@ def load_registered_estimator(
             f"registered model {metadata.model_uri} was not logged through the LLCA "
             "Estimator/Pyfunc contract"
         )
-    resolved_device = torch.device(
-        ("cuda" if torch.cuda.is_available() else "cpu") if device_name == "auto" else device_name
-    )
-    estimator.to_device(resolved_device)
+    estimator.set_inference_device(device_name)
     return estimator

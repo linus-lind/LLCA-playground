@@ -173,7 +173,9 @@ def _plot_signal_comparison(comparison: ComparisonEvaluation) -> None:
 def _plot_classification_comparison(comparison: ComparisonEvaluation) -> None:
     """Overlay available discrimination and probability-calibration curves for classifiers."""
     classifiers = [
-        result for result in comparison.results if result.evaluation.signal.kind == "classification"
+        result
+        for result in comparison.results
+        if result.evaluation.signal.kind in ("binary", "multiclass")
     ]
     if not classifiers:
         return

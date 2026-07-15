@@ -1,0 +1,2 @@
+name: "binary-cross-entropy"
+reduction: "mean"

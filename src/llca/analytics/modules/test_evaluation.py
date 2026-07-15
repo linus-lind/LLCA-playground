@@ -1,7 +1,5 @@
 from dataclasses import dataclass
 
-import pandas as pd
-
 from llca.analytics.modules.portfolio_evaluation import PortfolioEvaluation
 from llca.analytics.modules.signal_evaluation import SignalEvaluation
 from llca.models.estimators.prediction import PredictionOutput
@@ -22,10 +20,3 @@ class TestEvaluation:
     portfolio: PortfolioEvaluation | None
     valid_observations: int
     dates: int
-
-    @property
-    def portfolio_returns(self) -> pd.Series:
-        """Backward-compatible access to gross returns for simple plotting clients."""
-        if self.portfolio is None:
-            raise ValueError("this model output has no portfolio construction")
-        return self.portfolio.daily["gross_return"]

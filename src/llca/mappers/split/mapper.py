@@ -1,5 +1,7 @@
 """Build temporal split strategies independently from training execution."""
 
+from typing import Any
+
 from omegaconf import DictConfig
 
 from llca.mappers.modules.registry import Registry
@@ -7,7 +9,7 @@ from llca.splitting.single import SingleSplitter
 from llca.splitting.splitter import Splitter
 from llca.splitting.walk_forward import WalkForwardSplitter
 
-splitter_registry: Registry[Splitter] = Registry("splitter")
+splitter_registry: Registry[Splitter[Any]] = Registry("splitter")
 
 
 @splitter_registry.register("walk_forward")
@@ -35,6 +37,6 @@ def _build_single_split(cfg: DictConfig) -> SingleSplitter:
     )
 
 
-def build_split(cfg: DictConfig) -> Splitter:
+def build_split(cfg: DictConfig) -> Splitter[Any]:
     """Construct the registered temporal split strategy from validated settings."""
     return splitter_registry.build(str(cfg.name), cfg)

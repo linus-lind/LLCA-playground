@@ -1,0 +1,6 @@
+# @package _global_
+defaults:
+  - override /model: "fmg-ctct-1"
+  - override /loss: "portfolio-single-asset"
+
+experiment_name: "fmg-ctct-1"

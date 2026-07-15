@@ -1,0 +1,227 @@
+daily_values:
+  - name: "trading_calendar_filter"
+    calendar: "${calendar}"
+  - name: "corporate_adjustment"
+    price_columns: ["open", "high", "low", "close"]
+    price_factor: "price_adjustment_factor"
+    volume: "volume"
+    shares_outstanding: "shares_outstanding"
+    share_factor: "share_adjustment_factor"
+  - name: "deduplicate"
+  - name: "consistency_check"
+    constraints:
+      - name: "positive"
+        expressions:
+          - left: ["open", "high", "low", "close", "shares_outstanding"]
+            op: "gt"
+            right: 0
+        invalidate: "left"
+      - name: "non_negative"
+        expressions:
+          - left: ["volume"]
+            op: "ge"
+            right: 0
+        invalidate: "left"
+      - name: "ohlc_order"
+        expressions:
+          - { left: "high", op: "ge", right: "low" }
+          - { left: "high", op: "ge", right: "open" }
+          - { left: "high", op: "ge", right: "close" }
+          - { left: "low", op: "le", right: "open" }
+          - { left: "low", op: "le", right: "close" }
+        invalidate: ["open", "high", "low", "close"]
+  - name: "impute"
+    ffill: ["open", "high", "low", "close", "shares_outstanding"]
+    fill_zero: ["volume"]
+    subgroup_keys: "${membership_columns}"
+  - name: "consistency_check"
+    constraints:
+      - name: "ohlc_order"
+        expressions:
+          - { left: "high", op: "ge", right: "low" }
+          - { left: "high", op: "ge", right: "open" }
+          - { left: "high", op: "ge", right: "close" }
+          - { left: "low", op: "le", right: "open" }
+          - { left: "low", op: "le", right: "close" }
+        invalidate: ["open", "high", "low", "close"]
+
+firm_characteristics:
+  - name: "deduplicate"
+  - name: "consistency_check"
+    constraints:
+      - name: "positive"
+        expressions:
+          - left: [
+              "total_assets_quarterly",
+              "common_shares_outstanding_quarterly",
+              "market_value_total_quarter_end",
+              "close_price_quarter_end",
+              "total_assets_annual",
+              "common_shares_outstanding_annual"
+            ]
+            op: "gt"
+            right: 0
+        invalidate: "left"
+      - name: "non_negative"
+        expressions:
+          - left: [
+              "current_assets_quarterly",
+              "accounts_payable_quarterly",
+              "cash_short_term_investments_quarterly",
+              "cost_of_goods_sold_quarterly",
+              "debt_in_current_liabilities_quarterly",
+              "long_term_debt_quarterly",
+              "depreciation_amortization_quarterly",
+              "inventories_quarterly",
+              "current_liabilities_quarterly",
+              "total_liabilities_quarterly",
+              "gross_property_plant_equipment_quarterly",
+              "net_property_plant_equipment_quarterly",
+              "preferred_stock_total_quarterly",
+              "total_receivables_quarterly",
+              "total_revenue_quarterly",
+              "net_sales_quarterly",
+              "income_taxes_payable_quarterly",
+              "research_development_expense_quarterly",
+              "selling_general_admin_expense_quarterly",
+              "current_assets_annual",
+              "accounts_payable_annual",
+              "capital_expenditures_annual",
+              "cash_short_term_investments_annual",
+              "cost_of_goods_sold_annual",
+              "debt_in_current_liabilities_annual",
+              "long_term_debt_issuance_annual_cf",
+              "long_term_debt_reduction_annual_cf",
+              "long_term_debt_annual",
+              "depreciation_amortization_annual",
+              "depreciation_amortization_annual_cf",
+              "cash_dividends_annual_cf",
+              "common_dividends_annual",
+              "preferred_dividends_annual",
+              "employees_annual",
+              "goodwill_annual",
+              "intangible_assets_annual",
+              "inventories_annual",
+              "investment_tax_credit_balance_sheet_annual",
+              "current_liabilities_annual",
+              "total_liabilities_annual",
+              "gross_property_plant_equipment_annual",
+              "net_property_plant_equipment_annual",
+              "stock_repurchases_common_preferred_annual_cf",
+              "preferred_stock_total_annual",
+              "preferred_stock_liquidating_value_annual",
+              "preferred_stock_redemption_value_annual",
+              "total_receivables_annual",
+              "total_revenue_annual",
+              "net_sales_annual",
+              "stock_issuance_common_preferred_annual_cf",
+              "income_taxes_payable_annual",
+              "advertising_expense_annual",
+              "interest_expense_total_annual",
+              "research_development_expense_annual",
+              "selling_general_admin_expense_annual",
+              "capital_expenditures_fiscal_ytd",
+              "cost_of_goods_sold_fiscal_ytd",
+              "depreciation_amortization_fiscal_ytd",
+              "preferred_dividends_fiscal_ytd",
+              "cash_dividends_fiscal_ytd_cf",
+              "total_revenue_fiscal_ytd",
+              "net_sales_fiscal_ytd",
+              "research_development_expense_fiscal_ytd",
+              "selling_general_admin_expense_fiscal_ytd"
+            ]
+            op: "ge"
+            right: 0
+        invalidate: "left"
+  - name: "impute"
+    fill_zero: [
+      "research_development_expense_quarterly",
+      "research_development_expense_annual",
+      "research_development_expense_fiscal_ytd",
+      "advertising_expense_annual"
+    ]
+
+
+macro:
+  - name: "trading_calendar_filter"
+    calendar: "${calendar}"
+  - name: "deduplicate"
+  - name: "consistency_check"
+    constraints:
+      - name: "positive"
+        expressions:
+          - left: ["sp500_price_index", "dxy", "umich_consumer_sentiment", "cpi", "us_personal_consumption", "nonfarm_employment", "move", "vix"]
+            op: "gt"
+            right: 0
+        invalidate: "left"
+      - name: "non_negative"
+        expressions:
+          - left: ["fed_total_assets", "aaii_bullish", "aaii_bearish", "nyse_declining_volume", "nyse_advancing_volume"]
+            op: "ge"
+            right: 0
+        invalidate: "left"
+      - name: "sentiment_percentage_upper_bound"
+        expressions:
+          - left: ["aaii_bullish", "aaii_bearish"]
+            op: "lt"
+            right: 100
+        invalidate: "left"
+  - name: "missing_threshold_filter"
+    threshold: "${missing_threshold}"
+    columns: [
+      "sp500_price_index",
+      "nfci",
+      "nfci_adjusted",
+      "stl_fin_stress_index",
+      "dxy",
+      "fed_total_assets",
+      "aaii_bullish",
+      "aaii_bearish",
+      "umich_consumer_sentiment",
+      "nyse_declining_volume",
+      "nyse_advancing_volume",
+      "cpi",
+      "us_personal_consumption",
+      "nonfarm_employment",
+      "tips_10y_yield",
+      "baa10y_spread",
+      "move",
+      "vix"
+    ]
+  - name: "impute"
+    ffill: [
+      "sp500_price_index",
+      "nfci",
+      "nfci_adjusted",
+      "stl_fin_stress_index",
+      "dxy",
+      "fed_total_assets",
+      "aaii_bullish",
+      "aaii_bearish",
+      "umich_consumer_sentiment",
+      "cpi",
+      "us_personal_consumption",
+      "nonfarm_employment",
+      "tips_10y_yield",
+      "baa10y_spread",
+      "move",
+      "vix"
+    ]
+
+loss:
+  - name: "trading_calendar_filter"
+    calendar: "${calendar}"
+  - name: "corporate_adjustment"
+    price_columns: ["open"]
+    price_factor: "price_adjustment_factor"
+  - name: "deduplicate"
+  - name: "consistency_check"
+    constraints:
+      - name: "positive"
+        expressions:
+          - left: ["open"]
+            op: "gt"
+            right: 0
+        invalidate: "left"
+  - name: "impute"
+    ffill: ["open"]

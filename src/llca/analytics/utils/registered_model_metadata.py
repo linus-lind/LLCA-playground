@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from typing import Any
 
 import pandas as pd
 from omegaconf import DictConfig
@@ -16,3 +17,4 @@ class RegisteredModelMetadata:
     test_start: pd.Timestamp
     test_end: pd.Timestamp
     pipeline_config: DictConfig
+    data_manifest: dict[str, Any]

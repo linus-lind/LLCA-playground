@@ -3,6 +3,7 @@ from __future__ import annotations
 import gc
 from dataclasses import dataclass
 from functools import reduce
+from pathlib import Path
 
 import hydra
 import numpy as np
@@ -35,6 +36,7 @@ from llca.analytics.utils.registered_model_metadata import RegisteredModelMetada
 from llca.core.paths import PROJECT_ROOT, chdir_to_project_root
 from llca.core.resolvers import register_resolvers
 from llca.data.modules.masked_panel import MaskedPanel
+from llca.data.versioning import verify_raw_sources
 from llca.mappers import build_analytics, build_loss
 from llca.mappers.analytics.config_validator import validate_analytics_config
 from llca.models.estimators.evaluation_spec import EvaluationSpec
@@ -42,6 +44,12 @@ from llca.models.estimators.prediction import PredictionOutput
 
 register_resolvers()
 load_dotenv(PROJECT_ROOT / ".env")
+
+_CONFIG_PATH = (
+    "../configs"
+    if (Path(__file__).resolve().parents[1] / "configs").is_dir()
+    else "../../../hydra/configs"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -144,6 +152,28 @@ def _configured_objective(pipeline_config: DictConfig) -> nn.Module | None:
     return build_loss(loss)
 
 
+def _assert_return_convention(
+    metadata: tuple[RegisteredModelMetadata, ...], configured_return_type: str
+) -> None:
+    """Prevent portfolio accounting under a convention different from training targets."""
+    mismatches: list[str] = []
+    for model in metadata:
+        loss = model.pipeline_config.get("loss")
+        if not isinstance(loss, DictConfig) or loss.get("name") != "portfolio":
+            continue
+        trained_return_type = str(loss.get("return_type"))
+        if trained_return_type != configured_return_type:
+            mismatches.append(
+                f"{model.config.label}: training={trained_return_type}, "
+                f"analytics={configured_return_type}"
+            )
+    if mismatches:
+        raise ValueError(
+            "analytics.return_type must match every portfolio model's training target "
+            "convention: " + "; ".join(mismatches)
+        )
+
+
 def _target_panel(panel: MaskedPanel, column: str) -> MaskedPanel:
     """Retain one supervision column instead of the complete model-specific panel set."""
     return MaskedPanel(
@@ -160,22 +190,25 @@ def _release_accelerator_memory() -> None:
         torch.cuda.empty_cache()
 
 
-@hydra.main(config_path="../../../hydra/configs", config_name="analytics", version_base=None)
+@hydra.main(config_path=_CONFIG_PATH, config_name="analytics", version_base=None)
 def main(cfg: DictConfig) -> None:
     """Evaluate registry models sequentially on one shared date/instrument universe."""
     validate_analytics_config(cfg)
     analytics = build_analytics(cfg.analytics)
     tracking_uri = str(cfg.mlflow_tracking_uri)
     metadata = tuple(
-        get_registered_model_metadata(model, tracking_uri)
-        for model in analytics.models
+        get_registered_model_metadata(model, tracking_uri) for model in analytics.models
     )
+    verified_hashes: dict[Path, str] = {}
+    for model in metadata:
+        verify_raw_sources(model.data_manifest, verified_hashes=verified_hashes)
+    _assert_return_convention(metadata, analytics.return_type)
     comparison_start, comparison_end = _comparison_window(metadata, analytics.evaluation_end)
 
     candidates: list[_EvaluationCandidate] = []
     for model in metadata:
         estimator = load_registered_estimator(model, analytics.device)
-        panels = build_evaluation_panels(model.pipeline_config)
+        panels = build_evaluation_panels(model.pipeline_config, model.data_manifest)
         evaluation_spec = estimator.evaluation_spec
         test = test_window_with_history(
             panels,
@@ -227,17 +260,14 @@ def main(cfg: DictConfig) -> None:
         common_index=common_index,
     )
     report = export_publication_report(comparison, analytics)
-    manifest = build_analytics_manifest(cfg, metadata, comparison)
+    manifest = build_analytics_manifest(cfg, metadata, comparison, report)
     analytics_run_id = log_analytics_report(
         manifest,
         report,
         tracking_uri=tracking_uri,
         experiment_name=str(cfg.analytics_experiment_name),
     )
-    print(
-        f"Analytics report written to: {report.directory} "
-        f"(MLflow run {analytics_run_id})"
-    )
+    print(f"Analytics report written to: {report.directory} (MLflow run {analytics_run_id})")
     if analytics.show_plots:
         if len(results) == 1:
             plot_evaluation(results[0].evaluation)

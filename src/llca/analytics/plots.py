@@ -7,23 +7,6 @@ from matplotlib.ticker import PercentFormatter
 from llca.analytics.modules.test_evaluation import TestEvaluation
 
 
-def plot_cumulative_returns(portfolio_returns: pd.Series) -> None:
-    """Display one compounded return series for backward-compatible callers."""
-    if (portfolio_returns <= -1.0).any():
-        raise ValueError("cannot compound portfolio returns containing values <= -100%")
-    cumulative = (1.0 + portfolio_returns).cumprod() - 1.0
-    figure, axis = plt.subplots(figsize=(12, 6))
-    axis.plot(cumulative.index, cumulative.to_numpy(), color="#0B4F8A", linewidth=1.8)
-    axis.axhline(0.0, color="black", linewidth=0.8, alpha=0.5)
-    axis.set_title("Test Set Cumulative Return")
-    axis.set_xlabel("Date")
-    axis.set_ylabel("Cumulative return")
-    axis.yaxis.set_major_formatter(PercentFormatter(1.0))
-    axis.grid(True, alpha=0.25)
-    figure.tight_layout()
-    plt.show()
-
-
 def _plot_signal(evaluation: TestEvaluation) -> None:
     """Plot task-aware signal distributions, buckets, date dispersion, and calibration."""
     signal = evaluation.signal
@@ -107,7 +90,7 @@ def _plot_signal(evaluation: TestEvaluation) -> None:
         axis.grid(True, alpha=0.2)
     figure.tight_layout()
 
-    if signal.kind == "classification":
+    if signal.kind in ("binary", "multiclass"):
         classification_figure, classification_axes = plt.subplots(2, 2, figsize=(12, 9))
         classification_figure.suptitle("Classification Discrimination and Calibration")
         if signal.confusion is not None:

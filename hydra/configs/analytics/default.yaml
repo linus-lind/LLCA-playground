@@ -1,9 +1,18 @@
 models:
-  - name: ${experiment_name}
+  - name: "fmg-clstm"
     version: 1
-    label: "${experiment_name}"
-device: "auto"
-annualization_periods: ${trading_year}
+    label: "fmg-clstm"
+  - name: "fmg-ctt"
+    version: 1
+    label: "fmg-ctt"
+  - name: "fmg-ctct-1"
+    version: 1
+    label: "fmg-ctct-1"
+  - name: "fmg-ctct-2"
+    version: 1
+    label: "fmg-ctct-2"
+device: "cpu"
+annualization_periods: 252
 return_type: "log"
 signal_buckets: 10
 probability_bins: 10

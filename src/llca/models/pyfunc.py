@@ -4,13 +4,11 @@ from pathlib import Path
 from typing import Any
 
 import mlflow.pyfunc
-import torch
 
-from llca.data.modules.masked_panel import MaskedPanels
 from llca.models.estimators.estimator import Estimator
 
 
-class Pyfunc[EstimatorT: Estimator](mlflow.pyfunc.PythonModel):  # type: ignore[misc]
+class Pyfunc[EstimatorT: Estimator[Any]](mlflow.pyfunc.PythonModel):  # type: ignore[misc]
     """Expose any pipeline ``Estimator`` through MLflow's Python model protocol.
 
     MLflow serializes this adapter separately from the estimator bundle. The estimator is
@@ -28,10 +26,9 @@ class Pyfunc[EstimatorT: Estimator](mlflow.pyfunc.PythonModel):  # type: ignore[
         self,
         context: mlflow.pyfunc.PythonModelContext,
     ) -> None:
-        """Load the bundled estimator artifact on CUDA when available, otherwise CPU."""
+        """Load the bundle through its backend-neutral estimator contract."""
         bundle = Path(context.artifacts[self._bundle_artifact])
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self._estimator = self._estimator_cls.load(bundle, device)
+        self._estimator = self._estimator_cls.load(bundle, "auto")
 
     @property
     def estimator(self) -> EstimatorT:
@@ -43,6 +40,5 @@ class Pyfunc[EstimatorT: Estimator](mlflow.pyfunc.PythonModel):  # type: ignore[
         model_input: Any,
         params: dict[str, Any] | None = None,
     ) -> Any:
-        """Return native prediction values for the supplied ``MaskedPanels`` input."""
-        panels: MaskedPanels = model_input
-        return self._estimator.predict(panels).values
+        """Return native prediction values for the estimator's registered data contract."""
+        return self._estimator.predict(model_input).values

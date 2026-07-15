@@ -14,6 +14,7 @@ _ARTIFACT_PATH = "checkpoints"
 _REQUIRED_TRAINING_KEYS = (
     "model_state_dict",
     "optimizer_state_dict",
+    "optimizer_name",
     "epoch",
     "best_val",
     "best_state",
@@ -23,23 +24,6 @@ _REQUIRED_TRAINING_KEYS = (
 
 class CheckpointValidationError(ValueError):
     """Raised when a checkpoint cannot represent a resumable training state."""
-
-
-def checkpoint_optimizer_name(checkpoint: dict[str, Any]) -> str | None:
-    """Read explicit optimizer identity or infer it from legacy parameter groups."""
-    explicit = checkpoint.get("optimizer_name")
-    if isinstance(explicit, str):
-        return explicit
-    state = checkpoint.get("optimizer_state_dict")
-    if not isinstance(state, dict):
-        return None
-    groups = state.get("param_groups")
-    if not isinstance(groups, list) or not groups or not isinstance(groups[0], dict):
-        return None
-    decoupled = groups[0].get("decoupled_weight_decay")
-    if isinstance(decoupled, bool):
-        return "adamw" if decoupled else "adam"
-    return None
 
 
 def validate_training_checkpoint(
@@ -56,6 +40,9 @@ def validate_training_checkpoint(
         raise CheckpointValidationError(f"{label} model_state_dict must be a mapping")
     if not isinstance(payload["optimizer_state_dict"], dict):
         raise CheckpointValidationError(f"{label} optimizer_state_dict must be a mapping")
+    optimizer_name = payload["optimizer_name"]
+    if not isinstance(optimizer_name, str) or not optimizer_name:
+        raise CheckpointValidationError(f"{label} optimizer_name must be a non-empty string")
     epoch = payload["epoch"]
     if isinstance(epoch, bool) or not isinstance(epoch, int) or epoch < 0:
         raise CheckpointValidationError(f"{label} epoch must be a non-negative integer")
@@ -115,9 +102,7 @@ class Checkpointer:
         """Load and validate the latest state, failing rather than silently restarting."""
         if not self.latest_path.exists():
             raise FileNotFoundError(f"resume checkpoint does not exist: {self.latest_path}")
-        payload = torch.load(
-            self.latest_path, map_location=map_location, weights_only=False
-        )
+        payload = torch.load(self.latest_path, map_location=map_location, weights_only=False)
         return validate_training_checkpoint(payload, source=self.latest_path)
 
     def _write(self, path: Path, payload: dict[str, Any]) -> Path:

@@ -83,6 +83,10 @@ def build_batches(index: pd.Index, batch_size: int) -> list[Batch]:
     entity receives one column, and each date stores parallel source-row and destination-
     column indices. A plain date index is treated as a single-entity panel.
     """
+    if batch_size <= 0:
+        raise ValueError("batch_size must be positive")
+    if not index.is_unique:
+        raise ValueError("batch index must not contain duplicate date/entity rows")
     dates = index.get_level_values(0)
     instruments = index.get_level_values(1) if index.nlevels > 1 else pd.Index([0] * len(index))
 

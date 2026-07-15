@@ -1,14 +1,21 @@
 from collections.abc import Callable
 from functools import partial
+from typing import cast
 
 import pandas as pd
-from omegaconf import DictConfig, ListConfig, OmegaConf
+from omegaconf import DictConfig, ListConfig
 
 from llca.data.modules.column_selection import is_all_columns
 from llca.data.modules.panels import Panels
 from llca.mappers.modules.column_ref import ColumnRef, referenced_columns
 from llca.mappers.modules.registry import Registry
-from llca.preprocessing.consistency_check import consistency_check
+from llca.preprocessing.consistency_check import (
+    ComparisonOperator,
+    ConstraintExpression,
+    ConstraintRule,
+    Invalidation,
+    consistency_check,
+)
 from llca.preprocessing.corporate_adjustment import corporate_adjustment
 from llca.preprocessing.deduplicate import deduplicate
 from llca.preprocessing.impute import impute
@@ -23,21 +30,35 @@ preprocessing_registry: Registry[Transform] = Registry("preprocessing step")
 
 @preprocessing_registry.register(
     "consistency_check",
-    columns=[
-        ColumnRef("positive", "list", required=False),
-        ColumnRef("non_negative", "list", required=False),
-        ColumnRef("ordering", "map", required=False),
-        ColumnRef("bounded", "map_keys", required=False),
-    ],
+    columns=[ColumnRef("constraints", "constraint_rules")],
 )
 def _consistency_check(spec: DictConfig) -> Transform:
-    """Bind consistency rules into a reusable DataFrame transform."""
+    """Bind validated generic consistency rules into a reusable transform."""
+    rules = tuple(
+        ConstraintRule(
+            name=str(rule.name),
+            expressions=tuple(
+                ConstraintExpression(
+                    left=(str(expression.left),)
+                    if isinstance(expression.left, str)
+                    else tuple(str(column) for column in expression.left),
+                    operator=cast(ComparisonOperator, str(expression.op)),
+                    right=expression.right,
+                )
+                for expression in rule.expressions
+            ),
+            invalidate=cast(
+                Invalidation,
+                str(rule.get("invalidate", "left"))
+                if isinstance(rule.get("invalidate", "left"), str)
+                else tuple(str(column) for column in rule.invalidate),
+            ),
+        )
+        for rule in spec.constraints
+    )
     return partial(
         consistency_check,
-        positive=list(spec.get("positive", [])),
-        non_negative=list(spec.get("non_negative", [])),
-        ordering=spec.get("ordering") or OmegaConf.create({}),
-        bounded=spec.get("bounded") or OmegaConf.create({}),
+        rules=rules,
     )
 
 
@@ -142,9 +163,11 @@ def _require_columns(panel: pd.DataFrame, step: DictConfig) -> None:
 
 def _apply_steps(steps: ListConfig | None, panel: pd.DataFrame) -> pd.DataFrame:
     """Apply registered transforms in declared order with runtime column checks."""
+    roles = dict(panel.attrs)
     for step in steps or []:
         _require_columns(panel, step)
         panel = preprocessing_registry.build(step.name, step)(panel)
+        panel.attrs.update(roles)
     return panel
 
 

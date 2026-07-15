@@ -9,7 +9,7 @@ from llca.splitting.slice_by_date import slice_by_date
 from llca.splitting.splitter import Splitter
 
 
-class WalkForwardSplitter(Splitter):
+class WalkForwardSplitter(Splitter[MaskedPanels]):
     """Generate fixed-width chronological folds over a shared panel calendar.
 
     Each fold contains train, purge, validation, purge, and test date ranges. The complete
@@ -17,6 +17,10 @@ class WalkForwardSplitter(Splitter):
     prepended to train and validation input slices solely to construct temporal features;
     recorded evaluation boundaries exclude them.
     """
+
+    @property
+    def name(self) -> str:
+        return "walk_forward"
 
     def __init__(
         self,

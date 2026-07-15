@@ -1,30 +1,36 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
+from typing import Any
+
 import numpy as np
 import pandas as pd
 from omegaconf import DictConfig
 
 from llca.data.index_spec import time_level
-from llca.data.masking import align_and_mask
 from llca.data.modules.masked_panel import MaskedPanels
-from llca.mappers import build_datasets, build_feature_panels, build_masking
-from llca.mappers.preprocessing import build_preprocessing
+from llca.mappers.model.mapper import model_capabilities
 from llca.models.estimators.prediction import PredictionOutput
+from llca.pipeline.preparation import prepare_model_data
 from llca.splitting.slice_by_date import slice_by_date
 
 
-def build_evaluation_panels(cfg: DictConfig) -> MaskedPanels:
+def build_evaluation_panels(
+    cfg: DictConfig,
+    data_manifest: Mapping[str, Any],
+) -> MaskedPanels:
     """Rebuild the same canonical, feature-engineered and masked panels used for training."""
-    datasets = build_datasets(cfg.get("data"))
-    datasets = build_preprocessing(cfg.get("preprocessing"), datasets)
-    feature_panels = build_feature_panels(cfg.get("features"), datasets)
-    subgroups = build_masking(cfg.get("masking"))
-    return align_and_mask(
-        datasets,
-        feature_panels,
-        str(cfg.model.inputs.features),
-        subgroups,
+    capabilities = model_capabilities(str(cfg.model.name))
+    requirements = capabilities.resolve_data(cfg.model)
+    prepared = prepare_model_data(
+        cfg,
+        requirements,
+        data_view=capabilities.data_view,
+        data_manifest=data_manifest,
     )
+    if not isinstance(prepared.data, dict):
+        raise TypeError("analytics currently requires a mapping-based estimator data view")
+    return prepared.data
 
 
 def test_window_with_history(

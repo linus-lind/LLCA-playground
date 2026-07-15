@@ -1,12 +1,18 @@
 from typing import Any
 
-from omegaconf import DictConfig
+from omegaconf import DictConfig, ListConfig
 
 from llca.data.modules.column_selection import ALL_COLUMNS, is_all_columns
 from llca.mappers.config_validation import check_fields, register_validator
 from llca.mappers.modules.config_field import ConfigField
 
-_DATASET_FIELDS = [ConfigField("path", "str"), ConfigField("date_format", "str", required=False)]
+_DATASET_FIELDS = [
+    ConfigField("path", "str"),
+    ConfigField("kind", "str", required=False),
+    ConfigField("frequency", "str", required=False),
+    ConfigField("date_format", "str", required=False),
+]
+_DATASET_KINDS = ("panel", "context", "events", "table")
 
 
 def _valid_entry(entry: Any) -> bool:
@@ -57,6 +63,9 @@ def _validate_rename(name: str, spec: DictConfig) -> list[str]:
 def _validate_dataset(name: str, spec: DictConfig, time_role: str | None) -> list[str]:
     """Validate one dataset's path, index mapping, value selection, and aliases."""
     errors = check_fields(spec, f"data.datasets.{name}", _DATASET_FIELDS)
+    kind = spec.get("kind")
+    if isinstance(kind, str) and kind not in _DATASET_KINDS:
+        errors.append(f"data.datasets.{name}.kind '{kind}' must be one of {list(_DATASET_KINDS)}")
 
     index = spec.get("index")
     if not isinstance(index, DictConfig):
@@ -93,4 +102,41 @@ def _validate_data(cfg: DictConfig) -> list[str]:
 
     for name, spec in datasets.items():
         errors.extend(_validate_dataset(str(name), spec, time_role))
+    selection = data.get("selection")
+    if selection is not None:
+        if not isinstance(selection, DictConfig):
+            errors.append("data.selection must be a mapping")
+        else:
+            errors.extend(
+                check_fields(
+                    selection,
+                    "data.selection",
+                    [
+                        ConfigField("entity_ids", "list", required=False),
+                        ConfigField("csv_chunk_size", "int", required=False, positive=True),
+                    ],
+                )
+            )
+            entity_ids = selection.get("entity_ids")
+            if isinstance(entity_ids, list | ListConfig):
+                invalid = [value for value in entity_ids if not isinstance(value, int | str)]
+                if invalid:
+                    errors.append("data.selection.entity_ids values must be integers or strings")
+                if len(set(entity_ids)) != len(entity_ids):
+                    errors.append("data.selection.entity_ids must not contain duplicates")
+    cache = data.get("cache")
+    if cache is not None:
+        if not isinstance(cache, DictConfig):
+            errors.append("data.cache must be a mapping")
+        else:
+            errors.extend(
+                check_fields(
+                    cache,
+                    "data.cache",
+                    [
+                        ConfigField("enabled", "bool"),
+                        ConfigField("directory", "str"),
+                    ],
+                )
+            )
     return errors

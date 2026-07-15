@@ -83,63 +83,115 @@ def _validate_trading_calendar_filter(spec: DictConfig) -> list[str]:
     return errors
 
 
-_BOUNDS = ("gt", "ge", "lt", "le")
+_COMPARISON_OPERATORS = ("gt", "ge", "lt", "le", "eq", "ne")
+_INVALIDATION_ACTIONS = ("left", "operands", "raise")
 
 
-def _validate_bounds(bounds: DictConfig, prefix: str) -> list[str]:
-    """Validate consistent strict/inclusive lower and upper scalar bounds."""
+def _validate_column_operand(value: object, prefix: str) -> list[str]:
+    """Validate a scalar column name or a non-empty list of unique column names."""
+    if isinstance(value, str):
+        return [] if value else [f"{prefix} must not be empty"]
+    if not isinstance(value, list | ListConfig):
+        return [f"{prefix} must be a column name or a list of column names"]
+    if not value:
+        return [f"{prefix} must not be empty"]
+
+    errors = [
+        f"{prefix}[{index}] must be a non-empty column name"
+        for index, column in enumerate(value)
+        if not isinstance(column, str) or not column
+    ]
+    valid = [column for column in value if isinstance(column, str) and column]
+    if len(valid) != len(set(valid)):
+        errors.append(f"{prefix} column names must be unique")
+    return errors
+
+
+def _validate_expression(expression: object, prefix: str) -> list[str]:
+    """Validate one generic left/operator/right comparison expression."""
+    if not isinstance(expression, DictConfig):
+        return [f"{prefix} must be a mapping with left, op, and right"]
+
     errors = []
-
-    unknown = [str(key) for key in bounds if str(key) not in _BOUNDS]
+    allowed = {"left", "op", "right"}
+    unknown = sorted(str(key) for key in expression if str(key) not in allowed)
     if unknown:
-        errors.append(f"{prefix} has unsupported bound(s) {unknown}; allowed: {list(_BOUNDS)}")
+        errors.append(f"{prefix} has unsupported field(s) {unknown}")
 
-    present = {bound: bounds.get(bound) is not None for bound in _BOUNDS}
-    for bound in _BOUNDS:
-        value = bounds.get(bound)
-        if value is not None and not is_number(value):
-            errors.append(f"{prefix}.{bound} must be a number")
+    if "left" not in expression:
+        errors.append(f"{prefix}.left is required")
+    else:
+        errors.extend(_validate_column_operand(expression.left, f"{prefix}.left"))
 
-    if not any(present.values()):
-        errors.append(f"{prefix} must specify at least one of {list(_BOUNDS)}")
-    if present["lt"] and present["le"]:
-        errors.append(f"{prefix} cannot set both 'lt' and 'le'")
-    if present["gt"] and present["ge"]:
-        errors.append(f"{prefix} cannot set both 'gt' and 'ge'")
+    operator = expression.get("op")
+    if operator not in _COMPARISON_OPERATORS:
+        errors.append(f"{prefix}.op must be one of {list(_COMPARISON_OPERATORS)}, got {operator!r}")
 
-    lower = bounds.get("gt") if present["gt"] else bounds.get("ge")
-    upper = bounds.get("lt") if present["lt"] else bounds.get("le")
-    if is_number(lower) and is_number(upper) and lower >= upper:
-        lower_name = "gt" if present["gt"] else "ge"
-        upper_name = "lt" if present["lt"] else "le"
-        errors.append(
-            f"{prefix} lower bound '{lower_name}' ({lower}) must be less than "
-            f"upper bound '{upper_name}' ({upper})"
-        )
+    if "right" not in expression:
+        errors.append(f"{prefix}.right is required")
+    else:
+        right = expression.right
+        if not is_number(right) and not (isinstance(right, str) and right):
+            errors.append(f"{prefix}.right must be a column name or a number")
+    return errors
 
+
+def _validate_constraint_rule(rule: object, prefix: str) -> list[str]:
+    """Validate a named group of expressions and its atomic invalidation policy."""
+    if not isinstance(rule, DictConfig):
+        return [f"{prefix} must be a mapping"]
+
+    errors = []
+    allowed = {"name", "expressions", "invalidate"}
+    unknown = sorted(str(key) for key in rule if str(key) not in allowed)
+    if unknown:
+        errors.append(f"{prefix} has unsupported field(s) {unknown}")
+
+    name = rule.get("name")
+    if not isinstance(name, str) or not name:
+        errors.append(f"{prefix}.name must be a non-empty string")
+
+    expressions = rule.get("expressions")
+    if not isinstance(expressions, list | ListConfig) or not expressions:
+        errors.append(f"{prefix}.expressions must be a non-empty list")
+    else:
+        for index, expression in enumerate(expressions):
+            errors.extend(_validate_expression(expression, f"{prefix}.expressions[{index}]"))
+
+    invalidate = rule.get("invalidate", "left")
+    if isinstance(invalidate, str):
+        if invalidate not in _INVALIDATION_ACTIONS:
+            errors.append(
+                f"{prefix}.invalidate must be one of {list(_INVALIDATION_ACTIONS)} "
+                "or a list of column names"
+            )
+    else:
+        errors.extend(_validate_column_operand(invalidate, f"{prefix}.invalidate"))
     return errors
 
 
 @preprocessing_registry.register_validator("consistency_check")
 def _validate_consistency_check(spec: DictConfig) -> list[str]:
-    """Validate per-column bound mappings for the consistency transform."""
-    bounded = spec.get("bounded")
-    if bounded is None:
-        return []
-
-    prefix = "preprocessing.consistency_check.bounded"
-    if not isinstance(bounded, DictConfig):
-        return [f"{prefix} must be a mapping of column -> bounds"]
-
+    """Validate generic, auditable scalar and cross-column consistency rules."""
+    prefix = "preprocessing.consistency_check"
     errors = []
-    for name, bounds in bounded.items():
-        column_prefix = f"{prefix}.{str(name)}"
-        if not isinstance(bounds, DictConfig):
-            errors.append(
-                f"{column_prefix} must be a mapping of bound operators ({'/'.join(_BOUNDS)})"
-            )
-            continue
-        errors.extend(_validate_bounds(bounds, column_prefix))
+    allowed = {"name", "constraints"}
+    unknown = sorted(str(key) for key in spec if str(key) not in allowed)
+    if unknown:
+        errors.append(f"{prefix} has unsupported field(s) {unknown}")
+
+    constraints = spec.get("constraints")
+    if not isinstance(constraints, list | ListConfig) or not constraints:
+        errors.append(f"{prefix}.constraints must be a non-empty list")
+        return errors
+
+    names = []
+    for index, rule in enumerate(constraints):
+        errors.extend(_validate_constraint_rule(rule, f"{prefix}.constraints[{index}]"))
+        if isinstance(rule, DictConfig) and isinstance(rule.get("name"), str):
+            names.append(str(rule.name))
+    if len(names) != len(set(names)):
+        errors.append(f"{prefix}.constraints rule names must be unique")
     return errors
 
 

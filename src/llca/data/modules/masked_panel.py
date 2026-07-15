@@ -21,6 +21,20 @@ class MaskedPanel:
     age: pd.DataFrame
     segment: pd.Series
 
+    def __post_init__(self) -> None:
+        """Reject ambiguous or misaligned panel state at its construction boundary."""
+        if not self.values.index.is_unique:
+            raise ValueError("MaskedPanel values index must be unique")
+        if not self.values.columns.is_unique:
+            raise ValueError("MaskedPanel values columns must be unique")
+        for name, frame in (("observed", self.observed), ("age", self.age)):
+            if not frame.index.equals(self.values.index):
+                raise ValueError(f"MaskedPanel {name} index must equal values index")
+            if not frame.columns.equals(self.values.columns):
+                raise ValueError(f"MaskedPanel {name} columns must equal values columns")
+        if not self.segment.index.equals(self.values.index):
+            raise ValueError("MaskedPanel segment index must equal values index")
+
     @property
     def columns(self) -> list[str]:
         return [str(column) for column in self.values.columns]

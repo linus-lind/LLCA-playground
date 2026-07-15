@@ -1,10 +1,12 @@
-from llca.models.estimators.estimator import Estimator, TrainableEstimator
+from llca.models.estimators.estimator import Estimator
 from llca.models.estimators.evaluation_spec import (
     EvaluationSpec,
     ObjectiveLayout,
     ObjectiveTensorAdapter,
 )
 from llca.models.estimators.prediction import PredictionOutput
+from llca.models.estimators.sklearn import SklearnEstimator
+from llca.models.estimators.torch import TorchEstimator, TorchTrainableEstimator
 
 __all__ = [
     "Estimator",
@@ -12,5 +14,7 @@ __all__ = [
     "ObjectiveLayout",
     "ObjectiveTensorAdapter",
     "PredictionOutput",
-    "TrainableEstimator",
+    "SklearnEstimator",
+    "TorchEstimator",
+    "TorchTrainableEstimator",
 ]

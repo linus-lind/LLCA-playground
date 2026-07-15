@@ -242,11 +242,11 @@ def _continuous_metrics(
     annualization_periods: int,
     include_forecast_errors: bool,
 ) -> tuple[dict[str, float], pd.DataFrame]:
-    """Evaluate scalar ranking or regression outputs at pooled and per-date levels.
+    """Evaluate scalar portfolio or regression outputs at pooled and per-date levels.
 
     Both tasks receive correlation, direction, score-shape, IC, ICIR, and coverage metrics.
     Absolute forecast errors and linear calibration are added only for regression because
-    ranking-score magnitudes need not share the target's units.
+    portfolio-score magnitudes need not share the target's units.
     """
     predicted_positive, actual_positive = _binary_directions(scores, target, target_threshold)
     correct = predicted_positive == actual_positive
@@ -526,7 +526,7 @@ def _binary_classification(
         observed_positive_rate=("positive_rate", "mean"),
     )
     return SignalEvaluation(
-        kind="classification",
+        kind="binary",
         metrics=metrics,
         per_date=per_date,
         rolling=_rolling_diagnostics(per_date, rolling_window, annualization_periods),
@@ -587,7 +587,7 @@ def _multiclass_classification(
     per_date = _classification_per_date(target, predicted)
     buckets = pd.DataFrame()
     return SignalEvaluation(
-        kind="classification",
+        kind="multiclass",
         metrics=metrics,
         per_date=per_date,
         rolling=_rolling_diagnostics(per_date, rolling_window, annualization_periods),
@@ -609,15 +609,15 @@ def evaluate_signal(
     rolling_window: int,
     signal_decay_periods: tuple[int, ...],
 ) -> SignalEvaluation:
-    """Dispatch an aligned prediction contract to ranking, regression, or classification analytics.
+    """Dispatch an aligned prediction contract to portfolio, regression, or class analytics.
 
-    Ranking and regression require one scalar per row. Multiclass classification is
-    identified by a score DataFrame; a Series denotes binary classification. Every path
-    returns the same ``SignalEvaluation`` container with task-inapplicable tables omitted.
+    Portfolio, regression, and binary outputs require one scalar per row. Multiclass
+    outputs require one score column per class. Every path returns the same
+    ``SignalEvaluation`` container with task-inapplicable tables omitted.
     """
     if not predictions.values.index.equals(target.index):
         raise ValueError("signal predictions and target must have identical aligned indices")
-    if predictions.kind in ("ranking", "regression", "allocation"):
+    if predictions.kind in ("portfolio", "regression"):
         return _evaluate_continuous(
             predictions,
             target.astype(float),
@@ -627,19 +627,21 @@ def evaluate_signal(
             rolling_window=rolling_window,
             signal_decay_periods=signal_decay_periods,
         )
-    if isinstance(predictions.values, pd.DataFrame):
+    if predictions.kind == "multiclass":
         return _multiclass_classification(
             predictions,
             target,
             rolling_window=rolling_window,
             annualization_periods=annualization_periods,
         )
-    return _binary_classification(
-        predictions,
-        target,
-        classification_threshold=classification_threshold,
-        probability_bins=probability_bins,
-        bucket_count=bucket_count,
-        rolling_window=rolling_window,
-        annualization_periods=annualization_periods,
-    )
+    if predictions.kind == "binary":
+        return _binary_classification(
+            predictions,
+            target,
+            classification_threshold=classification_threshold,
+            probability_bins=probability_bins,
+            bucket_count=bucket_count,
+            rolling_window=rolling_window,
+            annualization_periods=annualization_periods,
+        )
+    raise ValueError(f"unsupported prediction kind: {predictions.kind}")

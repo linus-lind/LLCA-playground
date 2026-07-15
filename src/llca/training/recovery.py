@@ -22,18 +22,17 @@ from omegaconf import DictConfig, OmegaConf
 
 from llca.core.artifacts import (
     DATA_MANIFEST_ARTIFACT,
-    LEGACY_PIPELINE_CONFIG_ARTIFACT,
     TRAINING_MANIFEST_ARTIFACT,
 )
-from llca.core.paths import CHECKPOINTS_DIR, PROJECT_ROOT
-from llca.training.checkpointer import (
-    checkpoint_optimizer_name,
-    validate_training_checkpoint,
-)
+from llca.core.paths import CHECKPOINTS_DIR
+from llca.data.versioning import DataVersioningError, validate_data_manifest
+from llca.training.checkpointer import validate_training_checkpoint
+from llca.training.manifests.source import SOURCE_FINGERPRINT_TAG
+from llca.training.manifests.training import validate_training_manifest
 from llca.training.modules.recovery_config import RecoveryConfig
 
 RUN_KIND_TAG = "llca.run_kind"
-RUN_KIND_PARENT = "cross_validation"
+RUN_KIND_PARENT = "training_plan"
 RUN_KIND_FOLD = "fold"
 RUN_PHASE_TAG = "llca.run_phase"
 RUN_PHASE_PREPARED = "prepared"
@@ -43,15 +42,12 @@ RUN_PHASE_MODEL_LOGGED = "model_logged"
 RUN_PHASE_REGISTERED = "registered"
 RUN_PHASE_COMPLETED = "completed"
 PIPELINE_FINGERPRINT_TAG = "llca.pipeline_sha256"
-SOURCE_FINGERPRINT_TAG = "llca.source_sha256"
 LOGGED_MODEL_URI_TAG = "llca.logged_model_uri"
 REGISTERED_MODEL_VERSION_TAG = "llca.registered_model_version"
 
 _LATEST_ARTIFACT = "checkpoints/latest.pt"
 _DATA_TAG_PREFIXES = (
     "llca.data_manifest_sha256",
-    "raw_data_md5_",
-    "processed_data_md5_",
     "raw_data_sha256_",
     "raw_data_dvc_",
     "processed_data_sha256_",
@@ -85,7 +81,7 @@ class ResumeCandidate:
 
 @dataclass(frozen=True, slots=True)
 class RecoverySelection:
-    """One explicitly resolved fold and its containing cross-validation run."""
+    """One explicitly resolved fold and its containing training-plan run."""
 
     candidate: ResumeCandidate
     pipeline_config: dict[str, Any]
@@ -109,18 +105,6 @@ def pipeline_fingerprint(config: Mapping[str, Any] | DictConfig) -> str:
     canonical.pop("recovery", None)
     encoded = json.dumps(canonical, sort_keys=True, separators=(",", ":"), default=str).encode()
     return hashlib.sha256(encoded).hexdigest()
-
-
-def source_fingerprint(source_root: Path | None = None) -> str:
-    """Hash executable package sources to reject silent code changes on future resumes."""
-    root = source_root or PROJECT_ROOT / "src" / "llca"
-    digest = hashlib.sha256()
-    for path in sorted(root.rglob("*.py")):
-        digest.update(path.relative_to(root).as_posix().encode())
-        digest.update(b"\0")
-        digest.update(path.read_bytes())
-        digest.update(b"\0")
-    return digest.hexdigest()
 
 
 def configuration_differences(
@@ -218,7 +202,8 @@ class RunLock:
             import fcntl
 
             fcntl.flock(  # type: ignore[attr-defined]
-                handle.fileno(), fcntl.LOCK_UN  # type: ignore[attr-defined]
+                handle.fileno(),
+                fcntl.LOCK_UN,  # type: ignore[attr-defined]
             )
         handle.close()
         self._handle = None
@@ -250,9 +235,7 @@ class RecoveryService:
             order_by=["attributes.start_time DESC"],
         )
         candidates = [
-            candidate
-            for run in runs
-            if (candidate := self._candidate_for_run(run)) is not None
+            candidate for run in runs if (candidate := self._candidate_for_run(run)) is not None
         ]
         return tuple(candidates)
 
@@ -274,7 +257,8 @@ class RecoveryService:
                 )
             candidate = eligible[0]
         else:
-            assert config.run_id is not None
+            if config.run_id is None:
+                raise RecoveryError("explicit recovery requires recovery.run_id")
             candidate = self._resolve_explicit(config.run_id, candidates)
         if not candidate.resumable:
             details = "; ".join(candidate.issues) or "required artifacts are unavailable"
@@ -324,7 +308,7 @@ class RecoveryService:
             optimizer = training_config.get("optimizer")
             if isinstance(optimizer, dict):
                 expected_optimizer = optimizer.get("name")
-        actual_optimizer = checkpoint_optimizer_name(payload)
+        actual_optimizer = payload["optimizer_name"]
         if expected_optimizer is not None and actual_optimizer != expected_optimizer:
             raise RecoveryError(
                 f"checkpoint optimizer {actual_optimizer!r} differs from stored "
@@ -334,27 +318,31 @@ class RecoveryService:
             PIPELINE_FINGERPRINT_TAG
         )
         actual_fingerprint = pipeline_fingerprint(selection.pipeline_config)
-        if stored_fingerprint is not None and stored_fingerprint != actual_fingerprint:
+        if stored_fingerprint != actual_fingerprint:
             raise RecoveryError("stored pipeline fingerprint does not match training manifest")
         data_fingerprint = self._client.get_run(selection.run_id).data.tags.get(
             "llca.data_manifest_sha256"
         )
-        if data_fingerprint is not None:
-            try:
-                data_path = self._client.download_artifacts(
-                    selection.run_id, DATA_MANIFEST_ARTIFACT
-                )
-                data_manifest = json.loads(Path(data_path).read_text(encoding="utf-8"))
-                encoded = json.dumps(
-                    data_manifest,
-                    sort_keys=True,
-                    separators=(",", ":"),
-                    default=str,
-                ).encode("utf-8")
-            except (MlflowException, FileNotFoundError, json.JSONDecodeError) as exc:
-                raise RecoveryError("run has no readable data manifest") from exc
-            if hashlib.sha256(encoded).hexdigest() != data_fingerprint:
-                raise RecoveryError("stored data manifest fingerprint does not match artifact")
+        try:
+            data_path = self._client.download_artifacts(selection.run_id, DATA_MANIFEST_ARTIFACT)
+            data_manifest = validate_data_manifest(
+                json.loads(Path(data_path).read_text(encoding="utf-8"))
+            )
+            encoded = json.dumps(
+                data_manifest,
+                sort_keys=True,
+                separators=(",", ":"),
+                default=str,
+            ).encode("utf-8")
+        except (
+            MlflowException,
+            FileNotFoundError,
+            json.JSONDecodeError,
+            DataVersioningError,
+        ) as exc:
+            raise RecoveryError("run has no valid data manifest") from exc
+        if hashlib.sha256(encoded).hexdigest() != data_fingerprint:
+            raise RecoveryError("stored data manifest fingerprint does not match artifact")
         return payload
 
     def validate_provenance(
@@ -370,14 +358,13 @@ class RecoveryService:
         for key, value in current_tags.items():
             if key.startswith(_DATA_TAG_PREFIXES):
                 previous = stored.get(key)
-                if previous is not None and previous != value:
+                if previous != value:
                     errors.append(f"{key}: stored={previous!r}, current={value!r}")
-        for key in ("git_commit", SOURCE_FINGERPRINT_TAG):
+        for key in (SOURCE_FINGERPRINT_TAG,):
             previous = stored.get(key)
             current = current_tags.get(key)
-            if previous is not None and current is not None and previous != current:
-                if not allow_source_mismatch:
-                    errors.append(f"{key}: stored={previous!r}, current={current!r}")
+            if previous != current and not allow_source_mismatch:
+                errors.append(f"{key}: stored={previous!r}, current={current!r}")
         if errors:
             raise RecoveryError(
                 "selected run is incompatible with current data/source provenance:\n  - "
@@ -397,11 +384,7 @@ class RecoveryService:
         for item in candidates:
             fold = "-" if item.fold_index is None else str(item.fold_index)
             epochs = "-" if item.completed_epochs is None else str(item.completed_epochs)
-            best = (
-                "-"
-                if item.best_validation_loss is None
-                else f"{item.best_validation_loss:.8g}"
-            )
+            best = "-" if item.best_validation_loss is None else f"{item.best_validation_loss:.8g}"
             issues = "; ".join(item.issues) or "-"
             rows.append(
                 f"{item.run_id:<32} {item.status:<10} {item.phase:<13} "
@@ -442,24 +425,24 @@ class RecoveryService:
         if not self._is_fold(run):
             return None
         tags = run.data.tags
-        phase = tags.get(RUN_PHASE_TAG, "legacy")
-        if phase == RUN_PHASE_COMPLETED or (phase == "legacy" and run.info.status == "FINISHED"):
+        phase = tags.get(RUN_PHASE_TAG)
+        if phase == RUN_PHASE_COMPLETED:
             return None
         parent_run_id = tags.get("mlflow.parentRunId")
         if not parent_run_id:
             return None
-        checkpoint_available = (
-            self._checkpoint_root.joinpath(run.info.run_id, "latest.pt").is_file()
-            or self._artifact_exists(run.info.run_id, _LATEST_ARTIFACT)
-        )
-        config_available = any(
-            self._artifact_exists(run.info.run_id, artifact)
-            for artifact in (
-                TRAINING_MANIFEST_ARTIFACT,
-                LEGACY_PIPELINE_CONFIG_ARTIFACT,
-            )
-        )
+        checkpoint_available = self._checkpoint_root.joinpath(
+            run.info.run_id, "latest.pt"
+        ).is_file() or self._artifact_exists(run.info.run_id, _LATEST_ARTIFACT)
+        config_available = self._artifact_exists(run.info.run_id, TRAINING_MANIFEST_ARTIFACT)
         issues: list[str] = []
+        if phase is None:
+            issues.append("missing run phase")
+        if not self._artifact_exists(run.info.run_id, DATA_MANIFEST_ARTIFACT):
+            issues.append("missing data manifest")
+        for tag in (PIPELINE_FINGERPRINT_TAG, "llca.data_manifest_sha256", SOURCE_FINGERPRINT_TAG):
+            if not tags.get(tag):
+                issues.append(f"missing {tag} tag")
         if not checkpoint_available:
             issues.append("missing latest checkpoint")
         if not config_available:
@@ -477,7 +460,7 @@ class RecoveryService:
             run_id=run.info.run_id,
             parent_run_id=parent_run_id,
             status=run.info.status,
-            phase=phase,
+            phase=phase or "<missing>",
             fold_index=fold_index,
             completed_epochs=completed_epochs,
             best_validation_loss=best_metric,
@@ -489,34 +472,25 @@ class RecoveryService:
 
     @staticmethod
     def _is_fold(run: Run) -> bool:
-        kind = run.data.tags.get(RUN_KIND_TAG)
-        name = run.info.run_name or ""
-        return kind == RUN_KIND_FOLD or (
-            kind is None and name.startswith("fold_") and "mlflow.parentRunId" in run.data.tags
-        )
+        return bool(run.data.tags.get(RUN_KIND_TAG) == RUN_KIND_FOLD)
 
     def _artifact_exists(self, run_id: str, artifact_path: str) -> bool:
         parent, name = artifact_path.rsplit("/", maxsplit=1)
         try:
-            return any(item.path == artifact_path and not item.is_dir for item in self._client.list_artifacts(run_id, parent))
+            return any(
+                item.path == artifact_path and not item.is_dir
+                for item in self._client.list_artifacts(run_id, parent)
+            )
         except (MlflowException, OSError):
             return False
 
     def _load_pipeline_config(self, run_id: str) -> dict[str, Any]:
-        last_error: Exception | None = None
-        for artifact in (TRAINING_MANIFEST_ARTIFACT, LEGACY_PIPELINE_CONFIG_ARTIFACT):
-            try:
-                path = self._client.download_artifacts(run_id, artifact)
-                value = json.loads(Path(path).read_text(encoding="utf-8"))
-            except (MlflowException, FileNotFoundError, json.JSONDecodeError) as exc:
-                last_error = exc
-                continue
-            if not isinstance(value, dict):
-                raise RecoveryError(
-                    f"run {run_id} training manifest must be a JSON object"
-                )
-            return cast(dict[str, Any], value)
-        raise RecoveryError(f"run {run_id} has no readable training manifest") from last_error
+        try:
+            path = self._client.download_artifacts(run_id, TRAINING_MANIFEST_ARTIFACT)
+            value = json.loads(Path(path).read_text(encoding="utf-8"))
+            return validate_training_manifest(value)
+        except (MlflowException, FileNotFoundError, json.JSONDecodeError, ValueError) as exc:
+            raise RecoveryError(f"run {run_id} has no valid training manifest") from exc
 
     def _materialize_artifact(self, run_id: str, artifact_path: str) -> Path:
         target = self._checkpoint_root / run_id / Path(artifact_path).name

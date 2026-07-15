@@ -1,73 +1,174 @@
+"""Generic row-wise consistency constraints for numerical research datasets."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from numbers import Real
+from typing import Literal
+
 import numpy as np
 import pandas as pd
-from omegaconf import DictConfig
 
-_ORDER_ROLES = ("high", "low", "open", "close", "bid", "ask")
+type ComparisonOperator = Literal["gt", "ge", "lt", "le", "eq", "ne"]
+type Invalidation = Literal["left", "operands", "raise"] | tuple[str, ...]
+type RightOperand = str | int | float
 
-
-def _invalid_ordering(panel: pd.DataFrame, ordering: DictConfig) -> pd.Series:
-    """Mark rows violating configured price-bar or quote ordering relationships."""
-    high, low, open_, close, bid, ask = (ordering.get(role) for role in _ORDER_ROLES)
-    columns = panel.columns
-    invalid = pd.Series(False, index=panel.index)
-
-    if high in columns and low in columns:
-        invalid |= panel[high] < panel[low]
-    if high in columns and open_ in columns:
-        invalid |= panel[high] < panel[open_]
-    if high in columns and close in columns:
-        invalid |= panel[high] < panel[close]
-    if low in columns and open_ in columns:
-        invalid |= panel[low] > panel[open_]
-    if low in columns and close in columns:
-        invalid |= panel[low] > panel[close]
-    if bid in columns and ask in columns:
-        invalid |= panel[bid] > panel[ask]
-
-    return invalid
+COMPARISON_OPERATORS: tuple[ComparisonOperator, ...] = ("gt", "ge", "lt", "le", "eq", "ne")
+INVALIDATION_ACTIONS = ("left", "operands", "raise")
 
 
-def _out_of_bounds(series: pd.Series, bounds: DictConfig) -> pd.Series:
-    """Mark values violating any configured strict or inclusive scalar bound."""
-    invalid = pd.Series(False, index=series.index)
-    gt, ge, lt, le = (bounds.get(bound) for bound in ("gt", "ge", "lt", "le"))
-    if gt is not None:
-        invalid |= series <= gt
-    if ge is not None:
-        invalid |= series < ge
-    if lt is not None:
-        invalid |= series >= lt
-    if le is not None:
-        invalid |= series > le
-    return invalid
+@dataclass(frozen=True, slots=True)
+class ConstraintExpression:
+    """Compare one or more left columns against a column or numerical scalar."""
+
+    left: tuple[str, ...]
+    operator: ComparisonOperator
+    right: RightOperand
+
+    def __post_init__(self) -> None:
+        if not self.left or any(not column for column in self.left):
+            raise ValueError("constraint expression requires at least one left column")
+        if len(self.left) != len(set(self.left)):
+            raise ValueError("constraint expression left columns must be unique")
+        if self.operator not in COMPARISON_OPERATORS:
+            raise ValueError(f"unsupported comparison operator: {self.operator!r}")
+        if isinstance(self.right, bool) or not isinstance(self.right, str | Real):
+            raise TypeError("constraint right operand must be a column or numerical scalar")
+
+
+@dataclass(frozen=True, slots=True)
+class ConstraintRule:
+    """Group expressions that share one auditable invalidation policy."""
+
+    name: str
+    expressions: tuple[ConstraintExpression, ...]
+    invalidate: Invalidation = "left"
+
+    def __post_init__(self) -> None:
+        if not self.name:
+            raise ValueError("constraint rule name must not be empty")
+        if not self.expressions:
+            raise ValueError(f"constraint rule '{self.name}' requires expressions")
+        if isinstance(self.invalidate, str):
+            if self.invalidate not in INVALIDATION_ACTIONS:
+                raise ValueError(
+                    f"constraint rule '{self.name}' has unsupported invalidation "
+                    f"action {self.invalidate!r}"
+                )
+        elif not self.invalidate or len(self.invalidate) != len(set(self.invalidate)):
+            raise ValueError(
+                f"constraint rule '{self.name}' invalidation columns must be non-empty and unique"
+            )
+
+
+def _predicate(
+    left: pd.Series,
+    operator: ComparisonOperator,
+    right: pd.Series | int | float,
+) -> pd.Series:
+    if operator == "gt":
+        return left > right
+    if operator == "ge":
+        return left >= right
+    if operator == "lt":
+        return left < right
+    if operator == "le":
+        return left <= right
+    if operator == "eq":
+        return left == right
+    return left != right
+
+
+def _expression_violations(
+    panel: pd.DataFrame,
+    expression: ConstraintExpression,
+) -> dict[str, pd.Series]:
+    """Return one violation mask per expanded left column, ignoring absent operands."""
+    right = panel[expression.right] if isinstance(expression.right, str) else expression.right
+    right_observed = right.notna() if isinstance(right, pd.Series) else True
+    violations: dict[str, pd.Series] = {}
+    for column in expression.left:
+        left = panel[column]
+        comparable = left.notna() & right_observed
+        violations[column] = comparable & ~_predicate(left, expression.operator, right)
+    return violations
+
+
+def _rule_columns(rule: ConstraintRule) -> tuple[str, ...]:
+    columns = [column for expression in rule.expressions for column in expression.left]
+    columns.extend(
+        expression.right for expression in rule.expressions if isinstance(expression.right, str)
+    )
+    return tuple(dict.fromkeys(columns))
+
+
+def _require_columns(panel: pd.DataFrame, rules: tuple[ConstraintRule, ...]) -> None:
+    referenced = {
+        column
+        for rule in rules
+        for column in (
+            *_rule_columns(rule),
+            *(rule.invalidate if isinstance(rule.invalidate, tuple) else ()),
+        )
+    }
+    missing = sorted(referenced - set(panel.columns))
+    if missing:
+        raise KeyError(f"consistency constraints reference missing columns: {missing}")
 
 
 def consistency_check(
     panel: pd.DataFrame,
-    positive: list[str],
-    non_negative: list[str],
-    ordering: DictConfig,
-    bounded: DictConfig,
+    rules: tuple[ConstraintRule, ...],
 ) -> pd.DataFrame:
-    """Replace economically inconsistent cells with missing values.
+    """Invalidate cells that violate configured scalar or column relationships.
 
-    Positivity and scalar bounds are evaluated per cell. Relational constraints such as
-    high/low or bid/ask invalidate all participating configured columns on an affected row,
-    preserving uncertainty rather than retaining a partially inconsistent tuple.
+    Missing operands do not constitute a relational violation. ``left`` invalidation acts
+    cell-by-cell, ``operands`` invalidates all participating operands on violating rows,
+    and an explicit column tuple invalidates an atomic configured group. A serializable
+    report is appended to ``DataFrame.attrs`` without changing the panel fingerprint.
     """
-    panel = panel.copy()
-    ordering_columns = [column for column in ordering.values() if column is not None]
+    _require_columns(panel, rules)
+    result = panel.copy()
+    rule_reports: list[dict[str, object]] = []
 
-    for column in positive:
-        panel.loc[panel[column] <= 0, column] = np.nan
-    for column in non_negative:
-        panel.loc[panel[column] < 0, column] = np.nan
+    for rule in rules:
+        masks: dict[str, pd.Series] = {}
+        row_violation = pd.Series(False, index=result.index)
+        for expression in rule.expressions:
+            expression_masks = _expression_violations(result, expression)
+            for column, mask in expression_masks.items():
+                masks[column] = masks.get(column, pd.Series(False, index=result.index)) | mask
+                row_violation |= mask
 
-    if ordering_columns:
-        panel.loc[_invalid_ordering(panel, ordering), ordering_columns] = np.nan
+        violating_rows = int(row_violation.sum())
+        invalidated_cells = 0
+        if violating_rows and rule.invalidate == "raise":
+            examples = [repr(index) for index in result.index[row_violation][:3]]
+            raise ValueError(
+                f"consistency rule '{rule.name}' failed for {violating_rows} row(s); "
+                f"examples: {examples}"
+            )
+        if rule.invalidate == "left":
+            for column, mask in masks.items():
+                invalidated_cells += int(mask.sum())
+                result.loc[mask, column] = np.nan
+        elif rule.invalidate == "operands":
+            columns = _rule_columns(rule)
+            invalidated_cells = violating_rows * len(columns)
+            result.loc[row_violation, list(columns)] = np.nan
+        elif isinstance(rule.invalidate, tuple):
+            invalidated_cells = violating_rows * len(rule.invalidate)
+            result.loc[row_violation, list(rule.invalidate)] = np.nan
 
-    for name, bounds in bounded.items():
-        column = str(name)
-        panel.loc[_out_of_bounds(panel[column], bounds), column] = np.nan
+        rule_reports.append(
+            {
+                "name": rule.name,
+                "violating_rows": violating_rows,
+                "invalidated_cells": invalidated_cells,
+            }
+        )
 
-    return panel
+    reports = list(result.attrs.get("consistency_reports", []))
+    reports.append({"rules": rule_reports})
+    result.attrs["consistency_reports"] = reports
+    return result

@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import hydra
 from dotenv import load_dotenv
 from hydra.core.hydra_config import HydraConfig
@@ -6,36 +8,35 @@ from omegaconf import DictConfig
 
 from llca.core.paths import PROJECT_ROOT, chdir_to_project_root
 from llca.core.resolvers import register_resolvers
-from llca.data.masking import align_and_mask
-from llca.data.versioning import archive_raw_sources, build_data_manifest, provenance_tags
+from llca.data.versioning import provenance_tags
 from llca.mappers import (
-    build_datasets,
-    build_feature_panels,
     build_loss,
-    build_masking,
     build_model,
     build_recovery,
     build_split,
     build_training,
-    data_source_path,
     validate_config,
 )
-from llca.mappers.preprocessing import build_preprocessing
-from llca.training.cross_validate import cross_validate
-from llca.training.manifest import (
+from llca.mappers.loss.mapper import objective_kind
+from llca.mappers.model.mapper import model_capabilities
+from llca.pipeline.preparation import prepare_training_data
+from llca.training.execution import execute_training
+from llca.training.manifests import (
+    build_environment_manifest,
     build_invocation_manifest,
     build_source_snapshot,
     build_training_manifest,
 )
-from llca.training.recovery import (
-    SOURCE_FINGERPRINT_TAG,
-    RecoverySelection,
-    RecoveryService,
-)
+from llca.training.manifests.source import SOURCE_FINGERPRINT_TAG
+from llca.training.recovery import RecoverySelection, RecoveryService
 from llca.utils.utils import git_commit, git_dirty
 
 register_resolvers()
 load_dotenv(PROJECT_ROOT / ".env")
+
+_CONFIG_PATH = (
+    "configs" if (Path(__file__).resolve().parent / "configs").is_dir() else "../../hydra/configs"
+)
 
 
 def _selected(cfg: DictConfig, group: str) -> DictConfig | None:
@@ -43,14 +44,14 @@ def _selected(cfg: DictConfig, group: str) -> DictConfig | None:
     return section if section is not None and section.get("name") is not None else None
 
 
-@hydra.main(config_path="../../hydra/configs", config_name="train", version_base=None)
+@hydra.main(config_path=_CONFIG_PATH, config_name="train", version_base=None)
 def main(cfg: DictConfig) -> None:
     """Build and execute the configured data-to-training pipeline.
 
     Configuration is validated before I/O. Named datasets pass through preprocessing,
     feature construction, alignment and masking; registered mappers then construct the
     objective, estimator factory, training policy, and temporal splitter. Raw/processed
-    data hashes and the Git commit are attached to cross-validation runs for provenance.
+    data hashes and the Git commit are attached to execution-plan runs for provenance.
     """
     recovery_config = build_recovery(cfg.recovery)
     recovery_service: RecoveryService | None = None
@@ -62,7 +63,8 @@ def main(cfg: DictConfig) -> None:
         recovery = recovery_service.resolve(recovery_config)
         if recovery_config.mode == "list":
             return
-        assert recovery is not None
+        if recovery is None:
+            raise RuntimeError("recovery selection did not return a resumable run")
         cfg = recovery_service.effective_config(
             cfg,
             recovery,
@@ -78,32 +80,30 @@ def main(cfg: DictConfig) -> None:
 
     validate_config(cfg)
 
-    logical_sources = {
-        str(name): data_source_path(spec) for name, spec in cfg.data.datasets.items()
-    }
-    archived_sources = archive_raw_sources(logical_sources)
-
-    datasets = build_datasets(cfg.get("data"))
-    datasets = build_preprocessing(cfg.get("preprocessing"), datasets)
-    feature_panels = build_feature_panels(cfg.get("features"), datasets)
-    membership = build_masking(cfg.get("masking"))
-    panels = align_and_mask(datasets, feature_panels, str(cfg.model.inputs.features), membership)
+    capabilities = model_capabilities(str(cfg.model.name))
+    requirements = capabilities.resolve_data(cfg.model)
+    prepared = prepare_training_data(cfg, requirements, data_view=capabilities.data_view)
 
     loss_cfg = _selected(cfg, "loss")
     objective = build_loss(loss_cfg) if loss_cfg is not None else None
 
-    estimator_factory = build_model(cfg.model, loss=objective)
+    estimator_factory = build_model(cfg.model, loss=objective, loss_config=loss_cfg)
 
     training = build_training(cfg.training)
     splitter = build_split(cfg.split)
 
-    data_manifest = build_data_manifest(
-        logical_sources,
-        feature_panels,
-        archived_sources=archived_sources,
-    )
+    data_manifest = prepared.data_manifest
     run_tags = provenance_tags(data_manifest)
+    run_tags |= {
+        "llca.model": str(cfg.model.name),
+        "llca.training_engine": str(training.engine),
+        "llca.data_view": capabilities.data_view,
+    }
+    if loss_cfg is not None:
+        run_tags["llca.objective"] = str(loss_cfg.name)
+        run_tags["llca.objective_kind"] = str(objective_kind(str(loss_cfg.name)))
     source_manifest = build_source_snapshot()
+    environment_manifest = build_environment_manifest()
 
     commit = git_commit()
     if commit is not None:
@@ -114,7 +114,8 @@ def main(cfg: DictConfig) -> None:
     run_tags[SOURCE_FINGERPRINT_TAG] = str(source_manifest["source_sha256"])
 
     if recovery is not None:
-        assert recovery_service is not None
+        if recovery_service is None:
+            raise RuntimeError("recovery service is unavailable for the selected run")
         recovery_service.validate_provenance(
             recovery,
             run_tags,
@@ -133,20 +134,21 @@ def main(cfg: DictConfig) -> None:
     if recovery is None:
         pipeline_config = build_training_manifest(cfg)
 
-    cross_validate(
-        panels,
+    execute_training(
+        prepared.data,
         splitter,
         estimator_factory,
         training,
         mlflow_tracking_uri=cfg.mlflow_tracking_uri,
         mlflow_experiment_name=cfg.experiment_name,
-        primary_dataset=cfg.model.inputs.features,
+        primary_dataset=prepared.plan.primary_dataset,
         run_tags=run_tags,
         registry_model_name=registry_model_name,
         pipeline_config=pipeline_config,
         data_manifest=data_manifest,
         invocation_manifest=invocation_manifest,
         source_manifest=source_manifest,
+        environment_manifest=environment_manifest,
         recovery=recovery,
     )
 

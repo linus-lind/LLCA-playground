@@ -41,9 +41,7 @@ def _run_dvc(*arguments: str, project_root: Path = PROJECT_ROOT) -> str:
         raise DataVersioningError(f"DVC executable not found: {_DVC_EXECUTABLE}") from exc
     except subprocess.CalledProcessError as exc:
         details = (exc.stderr or exc.stdout or str(exc)).strip()
-        raise DataVersioningError(
-            f"DVC command failed ({' '.join(arguments)}): {details}"
-        ) from exc
+        raise DataVersioningError(f"DVC command failed ({' '.join(arguments)}): {details}") from exc
     return completed.stdout.strip()
 
 
@@ -63,6 +61,57 @@ def sha256_file(path: Path) -> str:
         while chunk := stream.read(_HASH_CHUNK_SIZE):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def verify_raw_sources(
+    manifest: Mapping[str, Any],
+    *,
+    project_root: Path = PROJECT_ROOT,
+    verified_hashes: dict[Path, str] | None = None,
+) -> tuple[Path, ...]:
+    """Verify that local raw inputs exactly match an archived data manifest.
+
+    ``verified_hashes`` may be shared across several model manifests in one analytics
+    process. This avoids hashing the same immutable source repeatedly while still
+    rejecting conflicting archived expectations.
+    """
+    manifest = validate_data_manifest(manifest)
+    sources = manifest.get("sources")
+    if not isinstance(sources, Mapping):
+        raise DataVersioningError("data manifest has no valid 'sources' mapping")
+    cache = verified_hashes if verified_hashes is not None else {}
+    root = project_root.resolve()
+    verified: list[Path] = []
+    for source_key, value in sources.items():
+        if not isinstance(value, Mapping):
+            raise DataVersioningError(f"invalid raw source record: {source_key!r}")
+        relative = str(value.get("path", source_key))
+        path = (root / relative).resolve()
+        try:
+            path.relative_to(root)
+        except ValueError as exc:
+            raise DataVersioningError(f"manifest path escapes project root: {relative}") from exc
+        if not path.is_file():
+            raise DataVersioningError(
+                f"archived raw source is unavailable: {path}; restore it from DVC first"
+            )
+        expected_size = value.get("size_bytes")
+        if isinstance(expected_size, int) and path.stat().st_size != expected_size:
+            raise DataVersioningError(f"raw source size differs from archived run: {path}")
+        expected = value.get("sha256")
+        if not isinstance(expected, str) or not expected:
+            raise DataVersioningError(f"raw source record has no SHA-256: {relative}")
+        actual = cache.get(path)
+        if actual is None:
+            actual = sha256_file(path)
+            cache[path] = actual
+        if actual != expected:
+            raise DataVersioningError(
+                f"raw source differs from archived run: {path}; "
+                "restore the recorded DVC version before evaluation"
+            )
+        verified.append(path)
+    return tuple(verified)
 
 
 def _dvc_remote(project_root: Path) -> str:
@@ -147,8 +196,7 @@ def fingerprint_frame(frame: pd.DataFrame) -> dict[str, Any]:
         "dtypes": [str(dtype) for dtype in frame.dtypes],
         "index_names": [repr(name) for name in frame.index.names],
         "index_dtypes": [
-            str(frame.index.get_level_values(level).dtype)
-            for level in range(frame.index.nlevels)
+            str(frame.index.get_level_values(level).dtype) for level in range(frame.index.nlevels)
         ],
     }
     digest = hashlib.sha256(
@@ -176,6 +224,7 @@ def build_data_manifest(
     *,
     project_root: Path = PROJECT_ROOT,
     archived_sources: Mapping[str, Mapping[str, Any]] | None = None,
+    data_plan: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Archive unique raw files once and bind every logical dataset to its evidence."""
     source_records = (
@@ -196,11 +245,10 @@ def build_data_manifest(
         }
     unexpected = sorted(set(processed_panels) - set(logical_sources))
     if unexpected:
-        raise DataVersioningError(
-            f"processed panels have no configured raw source: {unexpected}"
-        )
+        raise DataVersioningError(f"processed panels have no configured raw source: {unexpected}")
     return {
         "schema_version": DATA_MANIFEST_SCHEMA_VERSION,
+        "plan": dict(data_plan or {}),
         "sources": source_records,
         "datasets": datasets,
     }
@@ -224,16 +272,12 @@ def provenance_tags(manifest: Mapping[str, Any]) -> dict[str, str]:
     """Flatten stable hashes into searchable MLflow tags; the manifest stays authoritative."""
     sources = cast(Mapping[str, Mapping[str, Any]], manifest["sources"])
     datasets = cast(Mapping[str, Mapping[str, Any]], manifest["datasets"])
-    tags: dict[str, str] = {
-        DATA_MANIFEST_FINGERPRINT_TAG: data_manifest_fingerprint(manifest)
-    }
+    tags: dict[str, str] = {DATA_MANIFEST_FINGERPRINT_TAG: data_manifest_fingerprint(manifest)}
     for name, record in datasets.items():
         source = sources[str(record["raw_source"])]
         dvc = cast(Mapping[str, Any], source["dvc"])
         tags[f"raw_data_sha256_{name}"] = str(source["sha256"])
         tags[f"raw_data_dvc_{name}"] = str(dvc["content_hash"])
-        if dvc["hash_algorithm"] == "md5":
-            tags[f"raw_data_md5_{name}"] = str(dvc["content_hash"])
         processed = cast(Mapping[str, Any], record["processed"])
         tags[f"processed_data_sha256_{name}"] = str(processed["sha256"])
     return tags
@@ -241,13 +285,22 @@ def provenance_tags(manifest: Mapping[str, Any]) -> dict[str, str]:
 
 def data_manifest_fingerprint(manifest: Mapping[str, Any]) -> str:
     """Return the canonical digest used to bind an artifact to MLflow metadata."""
-    encoded = json.dumps(
-        dict(manifest), sort_keys=True, separators=(",", ":"), default=str
-    ).encode("utf-8")
+    encoded = json.dumps(dict(manifest), sort_keys=True, separators=(",", ":"), default=str).encode(
+        "utf-8"
+    )
     return hashlib.sha256(encoded).hexdigest()
 
 
-def version_file(path: Path) -> str:
-    """Compatibility wrapper returning the DVC content hash after durable archival."""
-    record = archive_raw_file(path)
-    return str(cast(Mapping[str, Any], record["dvc"])["content_hash"])
+def validate_data_manifest(value: object) -> dict[str, Any]:
+    """Require the canonical data-audit schema emitted by current training runs."""
+    if not isinstance(value, dict):
+        raise DataVersioningError("data manifest must be a JSON object")
+    version = value.get("schema_version")
+    if version != DATA_MANIFEST_SCHEMA_VERSION:
+        raise DataVersioningError(
+            f"data manifest schema_version must be {DATA_MANIFEST_SCHEMA_VERSION}, got {version!r}"
+        )
+    for field in ("plan", "sources", "datasets"):
+        if not isinstance(value.get(field), Mapping):
+            raise DataVersioningError(f"data manifest has no valid '{field}' mapping")
+    return dict(value)

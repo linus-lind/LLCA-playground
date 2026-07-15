@@ -10,8 +10,5 @@ INVOCATION_MANIFEST_ARTIFACT = "pipeline/hydra_invocation.json"
 SOURCE_SNAPSHOT_ARTIFACT = "pipeline/source_snapshot.json"
 """Exact executable Python source files used by a model-producing run."""
 
-LEGACY_PIPELINE_CONFIG_ARTIFACT = "pipeline/config.json"
-"""Pre-manifest artifact path retained exclusively for loading existing runs."""
-
-PIPELINE_CONFIG_ARTIFACT = TRAINING_MANIFEST_ARTIFACT
-"""Backward-compatible symbol for the current canonical training artifact path."""
+ENVIRONMENT_MANIFEST_ARTIFACT = "pipeline/environment_manifest.json"
+"""Python, package, operating-system, and accelerator versions used by a run."""

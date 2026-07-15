@@ -9,7 +9,7 @@ from llca.splitting.slice_by_date import slice_by_date
 from llca.splitting.splitter import Splitter
 
 
-class SingleSplitter(Splitter):
+class SingleSplitter(Splitter[MaskedPanels]):
     """Create at most one chronological train/validation/test fold.
 
     Sizes and purge gaps count unique dates from the primary panel. ``lookback`` dates are
@@ -17,6 +17,10 @@ class SingleSplitter(Splitter):
     the evaluation windows recorded in ``Fold``. No fold is yielded when the calendar is
     too short for the complete layout.
     """
+
+    @property
+    def name(self) -> str:
+        return "single"
 
     def __init__(
         self,

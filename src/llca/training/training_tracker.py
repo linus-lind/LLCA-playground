@@ -127,7 +127,3 @@ class MlflowTrainingTracker:
             Metric(key, value, timestamp, self._global_step) for key, value in metrics.items()
         ]
         self._client.log_batch(self._run_id, metrics=entries)
-
-
-# Backward-compatible name for callers importing the previous concrete tracker.
-TrainingTracker = MlflowTrainingTracker

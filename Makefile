@@ -1,55 +1,62 @@
-.PHONY: help venv install install-dev lint type-check test clean mlflow-ui experiment-backup install-hooks
+.PHONY: help venv install install-dev install-hooks lint format-check type-check config-check test check clean mlflow-ui experiment-backup
 
 VENV := .venv
 
 ifeq ($(OS),Windows_NT)
 	VENV_BIN := $(VENV)/Scripts
 	PYTHON_SYS := py -3.13
+	PYTHON := $(VENV_BIN)/python.exe
 else
 	VENV_BIN := $(VENV)/bin
 	PYTHON_SYS := python3.13
+	PYTHON := $(VENV_BIN)/python
 endif
 
-PYTHON := $(VENV_BIN)/python
-PIP := $(VENV_BIN)/python -m pip
-PKG := src/llca
-TORCH_INDEX := https://download.pytorch.org/whl/cu126
+PIP := $(PYTHON) -m pip
 
-help:
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
-		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}' | sort
+help: ## Show available project tasks
+	@$(PYTHON_SYS) -c "import re; from pathlib import Path; rows=[m.groups() for line in Path('Makefile').read_text().splitlines() if (m:=re.match(r'^([a-zA-Z_-]+):.*?## (.*)$$', line))]; print('\n'.join(f'  {name:<18} {description}' for name, description in rows))"
 
-venv:
+$(PYTHON):
 	$(PYTHON_SYS) -m venv $(VENV)
 	$(PIP) install --upgrade pip
 
-install: $(VENV)
+venv: $(PYTHON) ## Create the Python 3.13 virtual environment
+
+install: venv ## Install runtime dependencies in editable mode
 	$(PIP) install -e .
-	$(PIP) install --force-reinstall torch --index-url $(TORCH_INDEX)
+
+install-dev: venv ## Install runtime and development dependencies
+	$(PIP) install -e ".[dev]"
 	"$(MAKE)" install-hooks
 
-install-hooks:
-	$(VENV_BIN)/pre-commit install --config .git-hooks-config.yaml -t pre-commit -t pre-push
+install-hooks: ## Install repository-local pre-commit and pre-push hooks
+	$(PYTHON) -m pre_commit install --config .git-hooks-config.yaml -t pre-commit -t pre-push
 
-lint:
-	$(VENV_BIN)/ruff check src/ tests/
+lint: ## Run Ruff without modifying files
+	$(PYTHON) -m ruff check src tests scripts
 
-type-check:
-	$(VENV_BIN)/mypy $(PKG)
+format-check: ## Verify Ruff formatting
+	$(PYTHON) -m ruff format --check src tests scripts
 
-mlflow-ui:
-	$(VENV_BIN)/mlflow ui --backend-store-uri sqlite:///mlflow.db
+type-check: ## Run strict Mypy over the package
+	$(PYTHON) -m mypy src scripts
 
-experiment-backup:
+config-check: ## Compose and validate every Hydra application root
+	$(PYTHON) scripts/validate_configs.py
+
+test: ## Run the complete unit and integration test suite
+	$(PYTHON) -m unittest discover -s tests -v
+
+check: lint format-check type-check config-check test ## Run the complete local quality gate
+
+mlflow-ui: ## Open the local MLflow tracking UI
+	$(PYTHON) -m mlflow ui --backend-store-uri sqlite:///mlflow.db
+
+experiment-backup: ## Archive and verify the local MLflow database and artifacts
 	$(PYTHON) scripts/archive_experiments.py
 
-clean:
-	find . -type f -name "*.pyc" -delete
-	find . -type d -name "__pycache__" -exec rm -rf {} +
-	find . -type d -name "*.egg-info" -exec rm -rf {} +
-	find . -type d -name ".ipynb_checkpoints" -exec rm -rf {} +
-	find hydra -mindepth 1 -maxdepth 1 -type d \( -name outputs -o -name multirun \) -exec rm -rf {} +
-	rm -rf dist/ build/ .coverage htmlcov/ .pytest_cache/ .mypy_cache/ .ruff_cache/
-	rm -rf logs/*.log mlruns/ mlartifacts/ mlflow.db
+clean: ## Remove disposable caches and Hydra execution logs only
+	$(PYTHON) scripts/clean_workspace.py
 
 .DEFAULT_GOAL := help

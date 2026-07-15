@@ -42,15 +42,14 @@ def _assert_no_active_runs(database: Path) -> None:
         raise ExperimentArchiveError(f"cannot inspect MLflow database {database}") from exc
     if rows:
         ids = ", ".join(str(row[0]) for row in rows[:10])
-        raise ExperimentArchiveError(
-            f"refusing to archive while MLflow runs are active: {ids}"
-        )
+        raise ExperimentArchiveError(f"refusing to archive while MLflow runs are active: {ids}")
 
 
 def _backup_database(source: Path, destination: Path) -> None:
-    with closing(sqlite3.connect(source)) as original, closing(
-        sqlite3.connect(destination)
-    ) as backup:
+    with (
+        closing(sqlite3.connect(source)) as original,
+        closing(sqlite3.connect(destination)) as backup,
+    ):
         original.backup(backup)
 
 

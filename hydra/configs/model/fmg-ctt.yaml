@@ -5,8 +5,7 @@ dropout: 0.1
 sequence_length: 252
 score_activation: "tanh"
 target:
-  # Stable instrument_id (CRSP PERMNO). Override for every concrete training run.
-  entity_id: null
+  entity_id: 14593
 diagnostics:
   score_saturation_threshold: 0.95
 inputs:

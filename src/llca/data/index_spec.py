@@ -34,10 +34,14 @@ def index_spec(cfg: DictConfig) -> IndexSpec:
 
 
 def time_level(panel: pd.DataFrame | pd.Series) -> str:
-    return str(panel.index.names[0])
+    configured = panel.attrs.get("llca.time_level")
+    return str(configured if configured is not None else panel.index.names[0])
 
 
 def entity_level(panel: pd.DataFrame | pd.Series) -> str | None:
+    if "llca.entity_level" in panel.attrs:
+        configured = panel.attrs["llca.entity_level"]
+        return str(configured) if configured is not None else None
     return str(panel.index.names[1]) if panel.index.nlevels > 1 else None
 
 

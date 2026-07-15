@@ -10,7 +10,7 @@ class SignalEvaluation:
     ``metrics`` contains scalar whole-sample statistics. ``per_date`` and ``rolling`` use
     a date index; ``decay`` is indexed by outcome lead; ``buckets`` is indexed by signal
     or confidence bucket. Classification and probabilistic tables are optional because
-    their contracts do not apply to ranking or regression outputs.
+    their contracts do not apply to portfolio or regression outputs.
     """
 
     kind: str

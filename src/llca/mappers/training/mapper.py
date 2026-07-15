@@ -3,6 +3,7 @@
 from omegaconf import DictConfig
 
 from llca.mappers.modules.registry import Registry
+from llca.training.modules.sklearn_config import SklearnTrainingConfig
 from llca.training.modules.training_config import (
     AdamConfig,
     AdamWConfig,
@@ -11,8 +12,10 @@ from llca.training.modules.training_config import (
     TrainingConfig,
     TrainingDiagnosticsConfig,
 )
+from llca.training.modules.training_policy import TrainingPolicy
 
 optimizer_registry: Registry[OptimizerConfig] = Registry("optimizer")
+training_registry: Registry[TrainingPolicy] = Registry("training engine")
 
 
 @optimizer_registry.register("adam")
@@ -33,8 +36,9 @@ def _build_adamw(cfg: DictConfig) -> AdamWConfig:
     )
 
 
-def build_training(cfg: DictConfig) -> TrainingConfig:
-    """Build model-independent training runtime configuration."""
+@training_registry.register("torch")
+def _build_torch_training(cfg: DictConfig) -> TrainingConfig:
+    """Build the reusable gradient-based PyTorch execution policy."""
     optimizer = optimizer_registry.build(str(cfg.optimizer.name), cfg.optimizer)
     return TrainingConfig(
         seed=int(cfg.seed),
@@ -56,3 +60,18 @@ def build_training(cfg: DictConfig) -> TrainingConfig:
             parameter_update_norms=bool(cfg.diagnostics.parameter_update_norms),
         ),
     )
+
+
+@training_registry.register("sklearn")
+def _build_sklearn_training(cfg: DictConfig) -> SklearnTrainingConfig:
+    """Build policy shared by scikit-learn-compatible estimator plugins."""
+    return SklearnTrainingConfig(
+        seed=int(cfg.seed),
+        n_jobs=int(cfg.n_jobs),
+        log_interval=int(cfg.get("log_interval", 1)),
+    )
+
+
+def build_training(cfg: DictConfig) -> TrainingPolicy:
+    """Construct a backend-neutral policy through the configured training engine."""
+    return training_registry.build(str(cfg.name), cfg)

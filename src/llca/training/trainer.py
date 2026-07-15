@@ -10,7 +10,7 @@ from typing import Any, cast
 import torch
 from torch import Tensor, nn
 
-from llca.training.checkpointer import Checkpointer, checkpoint_optimizer_name
+from llca.training.checkpointer import Checkpointer
 from llca.training.modules.tracking import TrainingTracker
 from llca.training.modules.training_config import TrainingConfig
 from llca.training.modules.training_diagnostics import TrainingBatchOutput, objective_loss
@@ -78,11 +78,6 @@ def _scalar_metrics(metrics: dict[str, float | Tensor]) -> dict[str, float]:
     return result
 
 
-def _checkpoint_optimizer_name(checkpoint: dict[str, Any]) -> str | None:
-    """Backward-compatible alias for the public checkpoint schema helper."""
-    return checkpoint_optimizer_name(checkpoint)
-
-
 class Trainer[BatchT]:
     """Optimize an ``nn.Module`` through model-specific batch callbacks.
 
@@ -137,9 +132,9 @@ class Trainer[BatchT]:
             raise ValueError("resume requires a checkpoint directory")
         if self._checkpointer is not None and resume:
             resumed = self._checkpointer.load_latest(map_location=device)
-            checkpoint_optimizer = _checkpoint_optimizer_name(resumed)
+            checkpoint_optimizer = cast(str, resumed["optimizer_name"])
             configured_optimizer = self._config.optimizer.optimizer_name
-            if checkpoint_optimizer is not None and checkpoint_optimizer != configured_optimizer:
+            if checkpoint_optimizer != configured_optimizer:
                 raise ValueError(
                     "cannot resume checkpoint created with optimizer "
                     f"'{checkpoint_optimizer}' using configured optimizer "

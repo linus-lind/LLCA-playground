@@ -5,7 +5,6 @@ defaults:
 experiment_name: "fmg-ctct-2"
 mlflow_tracking_uri: "sqlite:///mlflow.db"
 analytics_experiment_name: "${experiment_name}-analytics"
-trading_year: 252
 
 hydra:
   run:

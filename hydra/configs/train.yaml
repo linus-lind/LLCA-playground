@@ -1,16 +1,17 @@
 defaults:
-  - data: "fmg-ctcst"
-  - preprocessing: "fmg-ctcst"
-  - features: "fmg-ctcst"
-  - masking: "fmg-ctcst"
+  - data: "sp500-crsp-compustat"
+  - preprocessing: "sp500-crsp-compustat"
+  - features: "fmg-features"
+  - masking: "sp500-membership"
   - loss: "portfolio"
   - model: "fmg-ctct-2"
-  - training: "default"
+  - training: "torch"
   - recovery: "off"
   - split: "single_split"
+  - experiment: null
   - _self_
 
-experiment_name: "fmg-ctct-2"
+experiment_name: ${model.name}
 mlflow_tracking_uri: "sqlite:///mlflow.db"
 
 calendar: "XNYS"

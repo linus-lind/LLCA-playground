@@ -1,10 +1,9 @@
 # Training recovery
 
-Training recovery is an execution concern and is configured through the Hydra
-`recovery` group. Model, loss, split, and training values are restored from the selected
-run's `pipeline/training_manifest.json`; current YAML values do not alter an interrupted
-run. Runs created before the manifest migration remain readable through the legacy
-`pipeline/config.json` fallback.
+Recovery is an execution concern configured through the Hydra `recovery` group. Model,
+objective, data, split, and training values come from the selected run's immutable training
+manifest; current YAML does not alter an interrupted run. Only runs created with the
+current manifest, lifecycle-tag, provenance, and checkpoint schemas are resumable.
 
 ## Commands
 
@@ -20,7 +19,7 @@ Resume when exactly one candidate is valid:
 .\.venv\Scripts\python.exe -m llca recovery=auto
 ```
 
-Select a fold run or its cross-validation parent explicitly:
+Select a fold or its training-plan parent explicitly:
 
 ```powershell
 .\.venv\Scripts\python.exe -m llca `
@@ -28,8 +27,8 @@ Select a fold run or its cross-validation parent explicitly:
   recovery.run_id=<MLFLOW_RUN_ID>
 ```
 
-Source mismatches are rejected by default. A deliberate source migration can be allowed
-explicitly, while data and checkpoint compatibility remain mandatory:
+A deliberate source migration can be allowed while data and checkpoint compatibility
+remain mandatory:
 
 ```powershell
 .\.venv\Scripts\python.exe -m llca `
@@ -38,26 +37,27 @@ explicitly, while data and checkpoint compatibility remain mandatory:
   recovery.allow_source_mismatch=true
 ```
 
-The default `recovery=off` always starts a new cross-validation job.
+The default `recovery=off` starts a new execution of the selected split plan.
 
 ## Safety and lifecycle
 
-A fold is resumable only when its resolved training manifest and `latest.pt` are available.
-Recovery validates checkpoint schema, model configuration, optimizer identity, the data
-manifest fingerprint, data hashes, source provenance, and fold date boundaries before
-applying optimizer or model state. A per-run operating-system lock prevents concurrent
-training of the same fold.
+A fold is resumable only when its estimator lifecycle has produced a compatible atomic
+checkpoint. The built-in PyTorch lifecycle does so every epoch and captures optimizer,
+best state, early-stopping counters, and RNG state. The generic scikit-learn lifecycle is
+one-shot and is not resumable unless a concrete plugin explicitly implements incremental
+checkpoint recovery.
 
-Checkpoint replacement is atomic. A process interruption during a save therefore leaves
-the previous complete checkpoint in place.
+Recovery validates checkpoint schema, model/training configuration, optimizer identity,
+data manifest and hashes, source provenance, and fold boundaries. A per-run operating-
+system lock prevents concurrent training of one fold.
 
-MLflow runs advance through these phases:
+MLflow phases are:
 
 ```text
 prepared -> training -> trained -> model_logged -> registered -> completed
 ```
 
-Recovery is idempotent across these phases. If training already ended, it restores the best
-state and completes only the missing model logging or registry steps. For walk-forward jobs,
-completed folds are skipped, the interrupted fold is resumed, and later folds are started
-normally under the original parent run.
+The lifecycle is idempotent. If fitting ended, recovery restores the best state and
+performs only missing logging or registration. For walk-forward plans, completed folds are
+skipped, the selected interrupted fold resumes, and later folds start normally below the
+original parent.

@@ -24,9 +24,7 @@ class GatedCrossAttentionBlock(nn.Module):
         context_size: int | None = None,
     ) -> None:
         super().__init__()
-        self.attention = nn.MultiheadAttention(
-            d_model, n_heads, dropout=dropout, batch_first=True
-        )
+        self.attention = nn.MultiheadAttention(d_model, n_heads, dropout=dropout, batch_first=True)
         self.gate_add_norm = GateAddNorm(d_model, d_model, dropout)
         self.grn = GatedResidualNetwork(d_model, d_model, d_model, context_size, dropout)
 
@@ -54,8 +52,6 @@ class GatedCrossAttentionBlock(nn.Module):
 
         broadcast_context = None
         if context is not None:
-            broadcast_context = context.unsqueeze(1).expand(
-                *gated.shape[:-1], context.size(-1)
-            )
+            broadcast_context = context.unsqueeze(1).expand(*gated.shape[:-1], context.size(-1))
 
         return cast(Tensor, self.grn(gated, broadcast_context))

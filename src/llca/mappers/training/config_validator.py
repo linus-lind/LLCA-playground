@@ -4,9 +4,10 @@ import torch
 from omegaconf import DictConfig
 
 from llca.mappers.config_validation import ConfigField, check_fields, register_validator
-from llca.mappers.training.mapper import optimizer_registry
+from llca.mappers.training.mapper import optimizer_registry, training_registry
 
 _TRAINING_FIELDS = [
+    ConfigField("name", "str"),
     ConfigField("seed", "int", minimum=0, maximum=2**32),
     ConfigField("deterministic", "bool"),
     ConfigField("epochs", "int", positive=True),
@@ -36,6 +37,22 @@ _DIAGNOSTIC_FIELDS = [
 _PRECISIONS = ("bf16", "fp32")
 
 
+@training_registry.register_validator("sklearn")
+def _validate_sklearn(cfg: DictConfig) -> list[str]:
+    errors = check_fields(
+        cfg,
+        "training",
+        [
+            ConfigField("seed", "int", minimum=0, maximum=2**32),
+            ConfigField("n_jobs", "int"),
+            ConfigField("log_interval", "int", required=False, positive=True),
+        ],
+    )
+    if cfg.get("n_jobs") == 0:
+        errors.append("training.n_jobs must not be zero")
+    return errors
+
+
 @optimizer_registry.register_validator("adam")
 @optimizer_registry.register_validator("adamw")
 def _validate_adam_family(cfg: DictConfig) -> list[str]:
@@ -44,10 +61,20 @@ def _validate_adam_family(cfg: DictConfig) -> list[str]:
 
 @register_validator
 def _validate_training(cfg: DictConfig) -> list[str]:
-    """Validate generic execution settings and delegate optimizer-specific fields."""
+    """Validate the selected engine and its PyTorch policy configuration."""
     training = cfg.get("training")
     if not isinstance(training, DictConfig):
         return ["training must be a mapping"]
+
+    name = training.get("name")
+    if not isinstance(name, str):
+        return check_fields(training, "training", [ConfigField("name", "str")])
+    if not training_registry.is_registered(name):
+        return [
+            f"training.name '{name}' is not registered; available: {training_registry.available()}"
+        ]
+    if name != "torch":
+        return training_registry.validate(name, training)
 
     errors = check_fields(training, "training", _TRAINING_FIELDS)
     precision = training.get("precision")

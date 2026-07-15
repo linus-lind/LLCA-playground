@@ -1,23 +1,19 @@
+"""Backend-neutral estimator lifecycle and MLflow persistence boundary."""
+
 from __future__ import annotations
 
 import os
 import tempfile
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, ClassVar, Self
+from typing import ClassVar, Self
 
 import mlflow
-import torch
-from torch import Tensor
 
-from llca.data.modules.masked_panel import MaskedPanels
 from llca.models.estimators.evaluation_spec import EvaluationSpec
 from llca.models.estimators.prediction import PredictionOutput
 from llca.training.modules.tracking import TrainingTracker
-from llca.training.modules.training_config import TrainingConfig
-from llca.training.modules.training_diagnostics import objective_loss
-from llca.training.modules.training_task import TrainingTask
-from llca.training.reproducibility import capture_rng_state
+from llca.training.modules.training_policy import TrainingPolicy
 
 
 def _llca_package_dir() -> str:
@@ -27,13 +23,12 @@ def _llca_package_dir() -> str:
     return str(Path(llca.__file__).resolve().parent)
 
 
-class Estimator(ABC):
-    """Define the common lifecycle for trainable and serializable pipeline models.
+class Estimator[DataT](ABC):
+    """Backend-neutral lifecycle for trainable and serializable pipeline models.
 
-    Subclasses translate generic ``MaskedPanels`` into model inputs and return a typed
-    ``PredictionOutput``. Persistence has two levels: inference bundles contain only the
-    state required by ``predict``; resumable training states additionally contain the
-    optimizer, progress counters, best weights, and random-number-generator state.
+    Concrete implementations may use PyTorch, scikit-learn, native libraries, or an
+    external engine. The orchestrator depends only on fitting, prediction, persistence,
+    evaluation metadata, and an optional inference-device hook.
     """
 
     _MODEL_NAME: ClassVar[str]
@@ -43,19 +38,19 @@ class Estimator(ABC):
     @abstractmethod
     def fit(
         self,
-        train: MaskedPanels,
+        train: DataT,
         *,
-        training: TrainingConfig,
-        val: MaskedPanels | None = None,
+        training: TrainingPolicy,
+        val: DataT | None = None,
         tracker: TrainingTracker | None = None,
         checkpoint_dir: str | Path | None = None,
         resume: bool = False,
     ) -> None:
-        """Fit the estimator from training panels and optional validation data."""
+        """Fit the estimator from training data and optional validation data."""
         ...
 
     @abstractmethod
-    def predict(self, test: MaskedPanels) -> PredictionOutput:
+    def predict(self, test: DataT) -> PredictionOutput:
         """Return native model outputs indexed like the predictable test observations."""
         ...
 
@@ -69,34 +64,18 @@ class Estimator(ABC):
         """Number of prior dates inference needs before its first reported prediction."""
         return 0
 
-    @abstractmethod
-    def to_device(self, device: torch.device) -> None:
-        """Move inference state to a caller-selected device without rebuilding the model."""
+    def set_inference_device(self, device: str) -> None:
+        """Apply an optional backend-specific inference device selection."""
+        del device
 
     @abstractmethod
-    def _inference_payload(self) -> dict[str, Any]:
-        """Everything required to reconstruct the estimator for inference."""
-
-    @classmethod
-    @abstractmethod
-    def _from_payload(cls, payload: dict[str, Any], map_location: torch.device) -> Self:
-        """Construct a bare estimator from a payload, before state is restored."""
-
-    @abstractmethod
-    def _restore(self, payload: dict[str, Any]) -> None:
-        """Load model weights and preprocessing state from a payload in place."""
-
     def _save(self, path: str | Path) -> None:
-        """Serialize the subclass-defined inference bundle to ``path``."""
-        torch.save(self._inference_payload(), Path(path))
+        """Write the complete inference bundle to ``path``."""
 
     @classmethod
-    def load(cls, path: str | Path, map_location: torch.device) -> Self:
-        """Reconstruct an estimator and restore its inference state on ``map_location``."""
-        payload = torch.load(Path(path), map_location=map_location, weights_only=False)
-        estimator = cls._from_payload(payload, map_location)
-        estimator._restore(payload)
-        return estimator
+    @abstractmethod
+    def load(cls, path: str | Path, device: str = "auto") -> Self:
+        """Restore an inference bundle using a backend-defined device interpretation."""
 
     def log_model(self) -> str:
         """Log the inference bundle as an MLflow pyfunc model and return its URI."""
@@ -112,74 +91,3 @@ class Estimator(ABC):
                 code_paths=[_llca_package_dir()],
             )
         return str(info.model_uri)
-
-    @staticmethod
-    def _loss_value(output: object) -> Tensor:
-        """Loss modules may return either a bare scalar `Tensor` or a dataclass with a
-        `.loss` field plus auxiliary diagnostics (e.g. `PortfolioLossOutput` — turnover,
-        variance, ... logged separately but not backpropagated). This unwraps either form
-        to the single tensor `.backward()` should be called on.
-        """
-        return objective_loss(output)
-
-    def _training_state(
-        self,
-        optimizer: torch.optim.Optimizer,
-        epoch: int,
-        best_val: float,
-        best_state: dict[str, Tensor] | None,
-        epochs_without_improvement: int,
-    ) -> dict[str, Any]:
-        """Extend the inference bundle with all state required for deterministic resume."""
-        state = self._inference_payload()
-        state["optimizer_state_dict"] = optimizer.state_dict()
-        state["optimizer_name"] = type(optimizer).__name__.lower()
-        state["epoch"] = epoch
-        state["best_val"] = best_val
-        state["best_state"] = best_state
-        state["epochs_without_improvement"] = epochs_without_improvement
-        state["rng_state"] = capture_rng_state()
-        return state
-
-
-class TrainableEstimator[BatchT](Estimator, ABC):
-    """Provide the reusable fit lifecycle around a model-specific ``TrainingTask``.
-
-    Subclasses prepare data and define forward/objective behavior in one task factory.
-    Device resolution, optimizer execution, tracking, checkpointing, early stopping, and
-    exact resume remain shared by every trainable estimator.
-    """
-
-    @abstractmethod
-    def _build_training_task(
-        self,
-        train: MaskedPanels,
-        val: MaskedPanels | None,
-        training: TrainingConfig,
-        device: torch.device,
-    ) -> TrainingTask[BatchT]:
-        """Prepare fitted preprocessing state, model, batches, and train/validation steps."""
-
-    def fit(
-        self,
-        train: MaskedPanels,
-        *,
-        training: TrainingConfig,
-        val: MaskedPanels | None = None,
-        tracker: TrainingTracker | None = None,
-        checkpoint_dir: str | Path | None = None,
-        resume: bool = False,
-    ) -> None:
-        """Build a model-specific task and execute it through the shared trainer."""
-        from llca.training.trainer import Trainer
-
-        device = training.prepare()
-        task = self._build_training_task(train, val, training, device)
-        trainer = Trainer(
-            config=training,
-            task=task,
-            tracker=tracker,
-            checkpoint_dir=checkpoint_dir,
-            checkpoint_state=self._training_state,
-        )
-        trainer.fit(resume=resume)

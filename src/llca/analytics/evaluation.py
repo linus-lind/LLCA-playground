@@ -97,7 +97,9 @@ def _objective_rows(
     """
     score_values = predictions.values.to_numpy(dtype=np.float32)
     scores = torch.from_numpy(score_values)
-    if predictions.kind == "classification" and isinstance(predictions.values, pd.DataFrame):
+    if predictions.kind == "multiclass":
+        if not isinstance(predictions.values, pd.DataFrame):
+            raise TypeError("multiclass objective evaluation requires score columns")
         classes = {label: index for index, label in enumerate(predictions.values.columns)}
         encoded = target.map(classes)
         if encoded.isna().any():
@@ -173,12 +175,12 @@ def _portfolio(
     class while ensuring weights are constructed exactly as they were during training.
     """
     normalize: object
-    if predictions.kind == "allocation":
-        normalize = _direct_allocations
-    elif objective is not None:
+    if predictions.kind != "portfolio":
+        return None
+    if objective is not None:
         normalize = getattr(objective, "normalize_weights", None)
     else:
-        normalize = None
+        normalize = _direct_allocations
     if not callable(normalize):
         return None
     if not isinstance(predictions.values, pd.Series):

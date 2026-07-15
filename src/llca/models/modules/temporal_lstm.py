@@ -37,9 +37,7 @@ class TemporalLSTM(nn.Module):
         if num_layers == 1 and recurrent_dropout != 0.0:
             raise ValueError("LSTM recurrent_dropout must be zero when num_layers is one")
         if bidirectional:
-            raise ValueError(
-                "bidirectional LSTM would violate the model_dim output contract"
-            )
+            raise ValueError("bidirectional LSTM would violate the model_dim output contract")
 
         self.lstm = nn.LSTM(
             input_size=model_dim,
@@ -51,9 +49,7 @@ class TemporalLSTM(nn.Module):
             bidirectional=bidirectional,
         )
         self.gate_add_norm = GateAddNorm(model_dim, model_dim, output_dropout)
-        self.grn = GatedResidualNetwork(
-            model_dim, model_dim, model_dim, dropout=output_dropout
-        )
+        self.grn = GatedResidualNetwork(model_dim, model_dim, model_dim, dropout=output_dropout)
 
     def forward(self, sequence: Tensor) -> Tensor:
         """Return the gated top-layer final state as ``[N, D]``."""

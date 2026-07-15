@@ -5,8 +5,7 @@ dropout: 0.1
 sequence_length: 252
 score_activation: "tanh"
 target:
-  # Stable instrument_id (CRSP PERMNO). Override for every concrete training run.
-  entity_id: null
+  entity_id: 14593
 diagnostics:
   score_saturation_threshold: 0.95
 inputs:
@@ -21,7 +20,7 @@ cnn:
     - { out_channels: 8, kernel_size: [5, 1], padding: [0, 0] }
 lstm:
   # input_size, hidden_size, and output width are fixed to d_model.
-  num_layers: 2
+  num_layers: 3
   recurrent_dropout: 0.1
   output_dropout: 0.1
   bias: true

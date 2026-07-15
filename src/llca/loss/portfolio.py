@@ -1,4 +1,5 @@
-from typing import Literal, cast
+import math
+from typing import Literal
 
 import torch
 from torch import Tensor, nn
@@ -135,6 +136,23 @@ class PortfolioLoss(nn.Module):
         net_exposure_tolerance: float = 0.0,
     ) -> None:
         super().__init__()
+        parameters = {
+            "leverage": leverage,
+            "risk_aversion": risk_aversion,
+            "concentration_aversion": concentration_aversion,
+            "execution_fee": execution_fee,
+            "bid_ask_spread": bid_ask_spread,
+            "slippage": slippage,
+            "borrow_cost": borrow_cost,
+            "common_score_aversion": common_score_aversion,
+            "net_exposure_aversion": net_exposure_aversion,
+            "net_exposure_tolerance": net_exposure_tolerance,
+        }
+        non_finite = [name for name, value in parameters.items() if not math.isfinite(value)]
+        if non_finite:
+            raise ValueError(f"portfolio parameters must be finite: {non_finite}")
+        if leverage <= 0.0:
+            raise ValueError("leverage must be positive")
         if normalization not in PORTFOLIO_NORMALIZATIONS:
             raise ValueError(
                 f"unknown portfolio normalization '{normalization}', "
@@ -142,10 +160,11 @@ class PortfolioLoss(nn.Module):
             )
         if return_type not in ("simple", "log"):
             raise ValueError("portfolio return_type must be 'simple' or 'log'")
-        if common_score_aversion < 0.0:
-            raise ValueError("common_score_aversion must be non-negative")
-        if net_exposure_aversion < 0.0:
-            raise ValueError("net_exposure_aversion must be non-negative")
+        non_negative = [
+            name for name, value in parameters.items() if name != "leverage" and value < 0.0
+        ]
+        if non_negative:
+            raise ValueError(f"portfolio parameters must be non-negative: {non_negative}")
         if not 0.0 <= net_exposure_tolerance <= leverage:
             raise ValueError("net_exposure_tolerance must be between zero and leverage")
         self.leverage = leverage
@@ -163,11 +182,7 @@ class PortfolioLoss(nn.Module):
 
     def normalize_weights(self, scores: Tensor, valid_mask: Tensor) -> Tensor:
         """Apply the configured cross-sectional allocation rule to raw model scores."""
-        normalization = cast(
-            PortfolioNormalization,
-            getattr(self, "normalization", "gross"),
-        )
-        return _scores_to_weights(scores, self.leverage, valid_mask, normalization)
+        return _scores_to_weights(scores, self.leverage, valid_mask, self.normalization)
 
     def forward(
         self, weights: Tensor, returns: Tensor, valid_mask: Tensor | None = None
@@ -182,13 +197,22 @@ class PortfolioLoss(nn.Module):
             raise ValueError(
                 f"expected scores and returns of shape [B, N], got {tuple(weights.shape)} and {tuple(returns.shape)}"
             )
+        if weights.numel() == 0:
+            raise ValueError("portfolio objective requires at least one date and entity")
         if valid_mask is None:
             valid_mask = torch.ones_like(weights, dtype=torch.bool)
+        if valid_mask.shape != weights.shape or valid_mask.dtype != torch.bool:
+            raise ValueError("valid_mask must be boolean and have the same shape as scores")
+        if valid_mask.device != weights.device or returns.device != weights.device:
+            raise ValueError("scores, returns, and valid_mask must be on the same device")
+        if not bool(valid_mask.any(dim=-1).all().item()):
+            raise ValueError("every portfolio date must contain at least one valid entity")
+        if bool((~torch.isfinite(weights) & valid_mask).any().item()):
+            raise ValueError("portfolio scores must be finite at valid positions")
 
         common_score_penalty = _common_score_penalty(weights, valid_mask)
         returns = torch.where(valid_mask, returns, returns.new_zeros(()))
-        return_type = cast(ReturnType, getattr(self, "return_type", "simple"))
-        returns = _to_simple_returns(returns, return_type)
+        returns = _to_simple_returns(returns, self.return_type)
         weights = self.normalize_weights(weights, valid_mask)
 
         realised = _portfolio_returns(weights, returns)
@@ -208,11 +232,11 @@ class PortfolioLoss(nn.Module):
         mean_concentration = concentration.mean()
         net_exposure_penalty = _net_exposure_penalty(
             net,
-            getattr(self, "net_exposure_tolerance", 0.0),
+            self.net_exposure_tolerance,
         )
         market_penalty = (
-            getattr(self, "common_score_aversion", 0.0) * common_score_penalty
-            + getattr(self, "net_exposure_aversion", 0.0) * net_exposure_penalty
+            self.common_score_aversion * common_score_penalty
+            + self.net_exposure_aversion * net_exposure_penalty
         )
         utility = (
             mean_return
