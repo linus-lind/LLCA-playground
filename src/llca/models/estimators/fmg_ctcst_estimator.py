@@ -16,7 +16,7 @@ from llca.data.modules.masked_panel import MaskedPanel, MaskedPanels
 from llca.models.estimators.estimator import TrainableEstimator
 from llca.models.estimators.evaluation_spec import EvaluationSpec
 from llca.models.estimators.prediction import PredictionOutput
-from llca.models.fmg_ctcst import FmgCtcst, FmgTemporalModel
+from llca.models.fmg_ctcst import FmgCtcst, FmgLocalModel
 from llca.models.modules.conv_layer import ConvLayer
 from llca.models.utils.batching import Batch, Field, Window, build_batches
 from llca.models.utils.sequences import SequenceInput, WindowedTensor, build_sequences
@@ -123,11 +123,11 @@ class FmgCtcstEstimator(TrainableEstimator[Batch]):
         self._sequence_length = config.sequence_length
         self._feature_columns: list[str] = []
         self._context_columns: list[str] = []
-        self._model: FmgTemporalModel | None = None
+        self._model: FmgLocalModel | None = None
         self._feature_scaler: Standardizer | None = None
         self._context_scaler: Standardizer | None = None
 
-    def _build_model(self) -> FmgTemporalModel:
+    def _build_model(self) -> FmgLocalModel:
         """Construct the network after input column counts are known from the data split."""
         transformer = self._config.transformer
         cnn_layers = [_conv_layer(layer) for layer in self._config.cnn.layers]

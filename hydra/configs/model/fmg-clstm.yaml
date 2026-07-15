@@ -1,0 +1,31 @@
+name: "fmg-clstm"
+d_model: 64
+feature_embedding_dim: 16
+dropout: 0.1
+sequence_length: 252
+score_activation: "tanh"
+target:
+  # Stable instrument_id (CRSP PERMNO). Override for every concrete training run.
+  entity_id: null
+diagnostics:
+  score_saturation_threshold: 0.95
+inputs:
+  features: "daily_values"
+  context:
+    - "firm_characteristics"
+    - "macro"
+cnn:
+  layers:
+    - { out_channels: 8, kernel_size: [2, 1], padding: [0, 0] }
+    - { out_channels: 8, kernel_size: [4, 1], padding: [0, 0] }
+    - { out_channels: 8, kernel_size: [5, 1], padding: [0, 0] }
+lstm:
+  # input_size, hidden_size, and output width are fixed to d_model.
+  num_layers: 2
+  recurrent_dropout: 0.1
+  output_dropout: 0.1
+  bias: true
+  bidirectional: false
+supervision:
+  dataset: "loss"
+  column: "fwd_return"

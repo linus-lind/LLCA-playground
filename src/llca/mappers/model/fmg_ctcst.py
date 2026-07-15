@@ -6,6 +6,7 @@ from torch import nn
 
 from llca.mappers.config_validation import ConfigField, as_list, check_fields, is_int
 from llca.mappers.model.mapper import EstimatorFactory, model_registry
+from llca.models.estimators.fmg_clstm_estimator import FmgClstmEstimator
 from llca.models.estimators.fmg_ctcst_estimator import FmgCtcstEstimator
 from llca.models.estimators.fmg_ctct_1_estimator import FmgCtct1Estimator
 from llca.models.estimators.fmg_ctt_estimator import FmgCttEstimator
@@ -27,6 +28,13 @@ _DIAGNOSTIC_FIELDS = [
     ConfigField("score_saturation_threshold", "number", positive=True),
 ]
 _TARGET_FIELDS = [ConfigField("entity_id", "int", positive=True)]
+_LSTM_FIELDS = [
+    ConfigField("num_layers", "int", positive=True),
+    ConfigField("recurrent_dropout", "number", minimum=0.0, maximum=1.0),
+    ConfigField("output_dropout", "number", minimum=0.0, maximum=1.0),
+    ConfigField("bias", "bool"),
+    ConfigField("bidirectional", "bool"),
+]
 
 
 def _validate_score_activation(model: DictConfig) -> list[str]:
@@ -172,6 +180,25 @@ def _validate_transformer(model: DictConfig) -> list[str]:
     return errors
 
 
+def _validate_lstm(model: DictConfig) -> list[str]:
+    """Validate recurrent depth, both dropout locations, and dimensional invariants."""
+    errors = check_fields(model, "model", [ConfigField("lstm", "mapping")])
+    if errors:
+        return errors
+    lstm = model.lstm
+    errors.extend(check_fields(lstm, "model.lstm", _LSTM_FIELDS))
+
+    num_layers = lstm.get("num_layers")
+    recurrent_dropout = lstm.get("recurrent_dropout")
+    if num_layers == 1 and recurrent_dropout != 0.0:
+        errors.append("model.lstm.recurrent_dropout must be 0.0 when num_layers is 1")
+    if lstm.get("bidirectional") is True:
+        errors.append(
+            "model.lstm.bidirectional must be false to preserve the model.d_model output width"
+        )
+    return errors
+
+
 def _validate_diagnostics(model: DictConfig) -> list[str]:
     """Validate diagnostics whose interpretation is specific to FMG score outputs."""
     errors = check_fields(model, "model", [ConfigField("diagnostics", "mapping")])
@@ -198,16 +225,22 @@ def _validate_supervision(cfg: DictConfig) -> list[str]:
     return errors
 
 
-def _validate_fmg_common(cfg: DictConfig) -> list[str]:
-    """Compose architecture, input, supervision, convolution, and attention validation."""
+def _validate_fmg_base(cfg: DictConfig) -> list[str]:
+    """Validate FMG fields shared by transformer and recurrent variants."""
     model = cfg.model
     errors = check_fields(model, "model", _TOP_FIELDS)
     errors.extend(_validate_score_activation(model))
     errors.extend(_validate_inputs(cfg))
     errors.extend(_validate_supervision(cfg))
     errors.extend(_validate_cnn(model))
-    errors.extend(_validate_transformer(model))
     errors.extend(_validate_diagnostics(model))
+    return errors
+
+
+def _validate_fmg_common(cfg: DictConfig) -> list[str]:
+    """Compose shared FMG and transformer-specific validation."""
+    errors = _validate_fmg_base(cfg)
+    errors.extend(_validate_transformer(cfg.model))
     return errors
 
 
@@ -218,10 +251,13 @@ def _validate_fmg_ctcst(cfg: DictConfig) -> list[str]:
     return _validate_fmg_common(cfg)
 
 
-def _validate_single_asset_allocation(cfg: DictConfig, model_name: str) -> list[str]:
+def _validate_single_asset_allocation(
+    cfg: DictConfig, model_name: str, *, recurrent: bool = False
+) -> list[str]:
     """Validate target identity and the shared direct-allocation contract."""
-    errors = _validate_fmg_common(cfg)
+    errors = _validate_fmg_base(cfg)
     model = cfg.model
+    errors.extend(_validate_lstm(model) if recurrent else _validate_transformer(model))
     target_errors = check_fields(model, "model", [ConfigField("target", "mapping")])
     errors.extend(target_errors)
     if not target_errors:
@@ -252,6 +288,12 @@ def _validate_fmg_ctct_1(cfg: DictConfig) -> list[str]:
 def _validate_fmg_ctt(cfg: DictConfig) -> list[str]:
     """Validate the temporal-only single-asset allocation model."""
     return _validate_single_asset_allocation(cfg, "fmg-ctt")
+
+
+@model_registry.register_validator("fmg-clstm")
+def _validate_fmg_clstm(cfg: DictConfig) -> list[str]:
+    """Validate the recurrent single-asset allocation model."""
+    return _validate_single_asset_allocation(cfg, "fmg-clstm", recurrent=True)
 
 
 def _validate_single_asset_objective(model_name: str, loss: nn.Module | None) -> None:
@@ -286,6 +328,18 @@ def _build_fmg_ctt(
     """Bind the temporal-only model configuration to its target estimator."""
     _validate_single_asset_objective("fmg-ctt", loss)
     return partial(FmgCttEstimator, config=cfg, loss=loss)
+
+
+@model_registry.register("fmg-clstm")
+def _build_fmg_clstm(
+    cfg: DictConfig,
+    *,
+    loss: nn.Module | None = None,
+    **_: object,
+) -> EstimatorFactory:
+    """Bind the recurrent model configuration to its target-only estimator."""
+    _validate_single_asset_objective("fmg-clstm", loss)
+    return partial(FmgClstmEstimator, config=cfg, loss=loss)
 
 
 @model_registry.register("fmg-ctct-2")

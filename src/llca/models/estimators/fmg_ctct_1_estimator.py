@@ -19,7 +19,7 @@ from llca.models.estimators.fmg_ctcst_estimator import (
     _Windows,
 )
 from llca.models.estimators.prediction import PredictionOutput
-from llca.models.fmg_ctcst import FmgTemporalModel
+from llca.models.fmg_ctcst import FmgLocalModel
 from llca.models.fmg_ctct_1 import FmgCtct1
 from llca.models.utils.batching import Batch
 from llca.models.utils.sequences import WindowedTensor, build_sequences
@@ -68,7 +68,7 @@ class FmgCtct1Estimator(FmgCtcstEstimator):
         super().__init__(config=config, loss=loss, device=device)
         self._target_entity_id = int(config.target.entity_id)
 
-    def _build_model(self) -> FmgTemporalModel:
+    def _build_model(self) -> FmgLocalModel:
         """Construct the target-query network after input widths are known."""
         transformer = self._config.transformer
         cnn_layers = [_conv_layer(layer) for layer in self._config.cnn.layers]

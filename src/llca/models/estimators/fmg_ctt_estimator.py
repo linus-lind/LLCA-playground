@@ -16,6 +16,7 @@ from llca.models.estimators.fmg_ctcst_estimator import (
 )
 from llca.models.estimators.fmg_ctct_1_estimator import FmgCtct1Estimator
 from llca.models.estimators.prediction import PredictionOutput
+from llca.models.fmg_ctcst import FmgLocalModel
 from llca.models.fmg_ctt import FmgCtt
 from llca.models.utils.sequences import WindowedTensor, build_sequences
 
@@ -27,7 +28,7 @@ class FmgCttEstimator(FmgCtct1Estimator):
     _BUNDLE_ARTIFACT = "fmg-ctt_bundle"
     _BUNDLE_FILENAME = "fmg-ctt.pt"
 
-    def _build_model(self) -> FmgCtt:
+    def _build_model(self) -> FmgLocalModel:
         """Construct the temporal-only network after target input widths are known."""
         transformer = self._config.transformer
         cnn_layers = [_conv_layer(layer) for layer in self._config.cnn.layers]
@@ -73,7 +74,7 @@ class FmgCttEstimator(FmgCtct1Estimator):
     def predict(self, test: MaskedPanels) -> PredictionOutput:
         """Return target allocations without constructing any non-target sequence."""
         assert (
-            isinstance(self._model, FmgCtt)
+            self._model is not None
             and self._feature_scaler is not None
             and self._context_scaler is not None
         )
