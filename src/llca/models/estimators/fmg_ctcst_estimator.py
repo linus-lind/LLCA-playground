@@ -16,7 +16,7 @@ from llca.data.modules.masked_panel import MaskedPanel, MaskedPanels
 from llca.models.estimators.estimator import TrainableEstimator
 from llca.models.estimators.evaluation_spec import EvaluationSpec
 from llca.models.estimators.prediction import PredictionOutput
-from llca.models.fmg_ctcst import FmgCtcst
+from llca.models.fmg_ctcst import FmgCtcst, FmgTemporalModel
 from llca.models.modules.conv_layer import ConvLayer
 from llca.models.utils.batching import Batch, Field, Window, build_batches
 from llca.models.utils.sequences import SequenceInput, WindowedTensor, build_sequences
@@ -82,6 +82,7 @@ class _Windows:
     features: Window
     context: Field
     supervision: Tensor
+    index: pd.MultiIndex
     batches: list[Batch]
 
 
@@ -122,11 +123,11 @@ class FmgCtcstEstimator(TrainableEstimator[Batch]):
         self._sequence_length = config.sequence_length
         self._feature_columns: list[str] = []
         self._context_columns: list[str] = []
-        self._model: FmgCtcst | None = None
+        self._model: FmgTemporalModel | None = None
         self._feature_scaler: Standardizer | None = None
         self._context_scaler: Standardizer | None = None
 
-    def _build_model(self) -> FmgCtcst:
+    def _build_model(self) -> FmgTemporalModel:
         """Construct the network after input column counts are known from the data split."""
         transformer = self._config.transformer
         cnn_layers = [_conv_layer(layer) for layer in self._config.cnn.layers]
@@ -217,6 +218,7 @@ class FmgCtcstEstimator(TrainableEstimator[Batch]):
             features=self._windowed_field(raw.features, self._feature_scaler),
             context=self._field(raw.context, self._context_scaler),
             supervision=raw.supervision.to(self._device),
+            index=raw.index,
             batches=build_batches(raw.index, batch_size),
         )
 
@@ -247,7 +249,7 @@ class FmgCtcstEstimator(TrainableEstimator[Batch]):
         context_age: Tensor,
     ) -> tuple[Tensor, dict[str, Tensor]]:
         """Run one date-level network call inside the trainer's precision context."""
-        assert self._model is not None
+        assert isinstance(self._model, FmgCtcst)
         return cast(
             tuple[Tensor, dict[str, Tensor]],
             self._model(features, feature_age, context, context_age),
@@ -379,7 +381,7 @@ class FmgCtcstEstimator(TrainableEstimator[Batch]):
         the final row of each causal window; portfolio normalization remains downstream.
         """
         assert (
-            self._model is not None
+            isinstance(self._model, FmgCtcst)
             and self._feature_scaler is not None
             and self._context_scaler is not None
         )

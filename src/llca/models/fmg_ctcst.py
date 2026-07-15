@@ -12,18 +12,13 @@ _SELECTION_CONTEXT = "feature_selection"
 _GRN_CONTEXT = "pre_transformer"
 
 
-class FmgCtcst(nn.Module):
-    """Produce cross-sectional scores from local histories and point-in-time context.
-
-    One forward call represents a single prediction date with ``N`` instruments. Local
-    encoding and temporal attention operate on ``[N, T, D]`` independently per instrument.
-    Transposing to ``[T, N, D]`` then makes instruments the attention sequence, allowing
-    information exchange within each historical date. Temporal aggregation reduces the
-    result to ``[N, D]`` and the score head returns one unnormalized score per instrument.
+class FmgTemporalModel(nn.Module):
+    """Share local/context encoding and temporal aggregation across FMG variants.
 
     Raw features include ``B = buffer_size`` additional left-context rows for the causal
     convolution. ``feature_embedding_dim`` is used only while the ``F`` raw variables are
-    separate; all subsequent modules use ``D = model_dim``.
+    separate; all subsequent modules use ``D = model_dim``. Subclasses decide whether
+    cross-sectional processing produces one target representation or one per instrument.
     """
 
     def __init__(
@@ -60,9 +55,6 @@ class FmgCtcst(nn.Module):
             dropout=dropout,
             positional_encoding=SinusoidalPositionalEncoding(model_dim, max_len=sequence_length),
         )
-        self.cross_sectional_attention = GatedAttentionBlock(
-            model_dim, n_heads, dropout=dropout, positional_encoding=None
-        )
         self.aggregation = TemporalAggregation(model_dim)
         self.head = ScoreHead(model_dim, score_activation)
 
@@ -70,6 +62,63 @@ class FmgCtcst(nn.Module):
     def buffer_size(self) -> int:
         """Return the additional feature-history rows required by the local encoder."""
         return self.feature_encoder.buffer_size
+
+    def _encode_local(
+        self,
+        features: Tensor,
+        feature_age: Tensor,
+        context: Tensor,
+        context_age: Tensor,
+    ) -> tuple[Tensor, dict[str, Tensor]]:
+        """Build local temporal representations shared by FMG model variants."""
+        contexts, context_weights = self.context_encoder(context, context_age)
+        encoded, feature_weights = self.feature_encoder(
+            features,
+            feature_age,
+            selection_context=contexts[self.selection_context_name],
+            grn_context=contexts[self.grn_context_name],
+        )
+        local = self.temporal_attention(encoded)
+        selection_weights = {"context": context_weights, "feature": feature_weights}
+        return local, selection_weights
+
+
+class FmgCtcst(FmgTemporalModel):
+    """Produce cross-sectional scores from local histories and point-in-time context.
+
+    One forward call represents a single prediction date with ``N`` instruments. Local
+    encoding and temporal attention operate on ``[N, T, D]`` independently per instrument.
+    Transposing to ``[T, N, D]`` then makes instruments the attention sequence, allowing
+    information exchange within each historical date. Temporal aggregation reduces the
+    result to ``[N, D]`` and the score head returns one unnormalized score per instrument.
+    """
+
+    def __init__(
+        self,
+        num_features: int,
+        num_context_vars: int,
+        model_dim: int,
+        feature_embedding_dim: int,
+        sequence_length: int,
+        cnn_layers: list[ConvLayer],
+        n_heads: int,
+        dropout: float,
+        score_activation: str,
+    ) -> None:
+        super().__init__(
+            num_features=num_features,
+            num_context_vars=num_context_vars,
+            model_dim=model_dim,
+            feature_embedding_dim=feature_embedding_dim,
+            sequence_length=sequence_length,
+            cnn_layers=cnn_layers,
+            n_heads=n_heads,
+            dropout=dropout,
+            score_activation=score_activation,
+        )
+        self.cross_sectional_attention = GatedAttentionBlock(
+            model_dim, n_heads, dropout=dropout, positional_encoding=None
+        )
 
     def forward(
         self,
@@ -87,15 +136,9 @@ class FmgCtcst(nn.Module):
         and prevents padded entities from acting as attention keys. Returns scores ``[N]``
         plus context weights ``[N, C]`` and feature weights ``[N, T + B, F]``.
         """
-        contexts, context_weights = self.context_encoder(context, context_age)
-        encoded, feature_weights = self.feature_encoder(
-            features,
-            feature_age,
-            selection_context=contexts[self.selection_context_name],
-            grn_context=contexts[self.grn_context_name],
+        local, selection_weights = self._encode_local(
+            features, feature_age, context, context_age
         )
-
-        local = self.temporal_attention(encoded)
 
         cross_input = local.transpose(0, 1)
         key_padding_mask = None
@@ -108,6 +151,4 @@ class FmgCtcst(nn.Module):
 
         stock_embedding = self.aggregation(universal)
         scores = self.head(stock_embedding)
-
-        selection_weights = {"context": context_weights, "feature": feature_weights}
         return scores, selection_weights

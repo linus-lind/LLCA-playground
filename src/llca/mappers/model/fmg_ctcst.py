@@ -7,6 +7,7 @@ from torch import nn
 from llca.mappers.config_validation import ConfigField, as_list, check_fields, is_int
 from llca.mappers.model.mapper import EstimatorFactory, model_registry
 from llca.models.estimators.fmg_ctcst_estimator import FmgCtcstEstimator
+from llca.models.estimators.fmg_ctct_1_estimator import FmgCtct1Estimator
 
 _SCORE_ACTIVATIONS = ("identity", "softsign", "tanh")
 
@@ -24,6 +25,7 @@ _SUPERVISION_FIELDS = [
 _DIAGNOSTIC_FIELDS = [
     ConfigField("score_saturation_threshold", "number", positive=True),
 ]
+_TARGET_FIELDS = [ConfigField("entity_id", "int", positive=True)]
 
 
 def _validate_score_activation(model: DictConfig) -> list[str]:
@@ -195,10 +197,8 @@ def _validate_supervision(cfg: DictConfig) -> list[str]:
     return errors
 
 
-@model_registry.register_validator("fmg-ctct-2")
-@model_registry.register_validator("fmg-ctcst")
-def _validate_fmg_ctcst(cfg: DictConfig) -> list[str]:
-    """Compose architecture, input, target, convolution, and attention validation."""
+def _validate_fmg_common(cfg: DictConfig) -> list[str]:
+    """Compose architecture, input, supervision, convolution, and attention validation."""
     model = cfg.model
     errors = check_fields(model, "model", _TOP_FIELDS)
     errors.extend(_validate_score_activation(model))
@@ -208,6 +208,55 @@ def _validate_fmg_ctcst(cfg: DictConfig) -> list[str]:
     errors.extend(_validate_transformer(model))
     errors.extend(_validate_diagnostics(model))
     return errors
+
+
+@model_registry.register_validator("fmg-ctct-2")
+@model_registry.register_validator("fmg-ctcst")
+def _validate_fmg_ctcst(cfg: DictConfig) -> list[str]:
+    """Validate the full cross-sectional FMG variant and its legacy alias."""
+    return _validate_fmg_common(cfg)
+
+
+@model_registry.register_validator("fmg-ctct-1")
+def _validate_fmg_ctct_1(cfg: DictConfig) -> list[str]:
+    """Validate target identity and the direct single-asset allocation contract."""
+    errors = _validate_fmg_common(cfg)
+    model = cfg.model
+    target_errors = check_fields(model, "model", [ConfigField("target", "mapping")])
+    errors.extend(target_errors)
+    if not target_errors:
+        errors.extend(check_fields(model.target, "model.target", _TARGET_FIELDS))
+
+    if model.get("score_activation") != "tanh":
+        errors.append("model.score_activation must be 'tanh' for fmg-ctct-1 allocations")
+
+    loss = cfg.get("loss")
+    if not isinstance(loss, DictConfig) or loss.get("name") != "portfolio":
+        errors.append("fmg-ctct-1 requires loss.name 'portfolio'")
+        return errors
+    if loss.get("normalization") != "bounded":
+        errors.append("fmg-ctct-1 requires loss.normalization 'bounded'")
+    leverage = loss.get("leverage")
+    if not isinstance(leverage, int | float) or isinstance(leverage, bool) or leverage != 1.0:
+        errors.append("fmg-ctct-1 requires loss.leverage 1.0")
+    return errors
+
+
+@model_registry.register("fmg-ctct-1")
+def _build_fmg_ctct_1(
+    cfg: DictConfig,
+    *,
+    loss: nn.Module | None = None,
+    **_: object,
+) -> EstimatorFactory:
+    """Bind the target-query model configuration to its allocation estimator."""
+    if loss is None:
+        raise ValueError("fmg-ctct-1 requires a loss function")
+    if getattr(loss, "normalization", None) != "bounded":
+        raise ValueError("fmg-ctct-1 requires a bounded portfolio objective")
+    if float(getattr(loss, "leverage", float("nan"))) != 1.0:
+        raise ValueError("fmg-ctct-1 requires portfolio leverage 1.0")
+    return partial(FmgCtct1Estimator, config=cfg, loss=loss)
 
 
 @model_registry.register("fmg-ctct-2")

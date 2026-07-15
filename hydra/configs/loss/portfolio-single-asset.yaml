@@ -1,0 +1,14 @@
+name: "portfolio"
+leverage: 1.0
+normalization: "bounded"
+return_type: "log"
+risk_aversion: 1.0
+# Cross-sectional concentration/common-score penalties collapse to weight shrinkage for N=1.
+concentration_aversion: 0.0
+common_score_aversion: 0.0
+net_exposure_aversion: 0.0
+net_exposure_tolerance: 1.0
+execution_fee: 0.0001
+bid_ask_spread: 0.0003
+slippage: 0.0002
+borrow_cost: 0.00002
