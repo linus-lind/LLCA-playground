@@ -19,6 +19,7 @@ from llca.models.estimators.fmg_ctcst_estimator import (
     _Windows,
 )
 from llca.models.estimators.prediction import PredictionOutput
+from llca.models.fmg_ctcst import FmgTemporalModel
 from llca.models.fmg_ctct_1 import FmgCtct1
 from llca.models.utils.batching import Batch
 from llca.models.utils.sequences import WindowedTensor, build_sequences
@@ -67,7 +68,7 @@ class FmgCtct1Estimator(FmgCtcstEstimator):
         super().__init__(config=config, loss=loss, device=device)
         self._target_entity_id = int(config.target.entity_id)
 
-    def _build_model(self) -> FmgCtct1:
+    def _build_model(self) -> FmgTemporalModel:
         """Construct the target-query network after input widths are known."""
         transformer = self._config.transformer
         cnn_layers = [_conv_layer(layer) for layer in self._config.cnn.layers]
@@ -83,11 +84,36 @@ class FmgCtct1Estimator(FmgCtcstEstimator):
             score_activation=str(self._config.score_activation),
         )
 
-    @staticmethod
-    def _entity_values(index: pd.Index) -> pd.Index:
+    def _entity_values(self, index: pd.Index) -> pd.Index:
         if not isinstance(index, pd.MultiIndex) or index.nlevels < 2:
-            raise ValueError("fmg-ctct-1 requires a (date, entity) MultiIndex")
+            raise ValueError(f"{self._MODEL_NAME} requires a (date, entity) MultiIndex")
         return index.get_level_values(1)
+
+    def _target_only_split(self, split: MaskedPanels) -> MaskedPanels:
+        """Remove every non-target entity before sequence construction and scaling."""
+        source_index = split[self._feature_dataset_name].values.index
+        source_entities = self._entity_values(source_index)
+        keep = np.asarray(source_entities == self._target_entity_id, dtype=bool)
+        if not keep.any():
+            raise ValueError(
+                f"target entity {self._target_entity_id} is absent from dataset "
+                f"'{self._feature_dataset_name}'"
+            )
+        target_dates = source_index[keep].get_level_values(0)
+        if target_dates.duplicated().any():
+            duplicate = target_dates[target_dates.duplicated()][0]
+            raise ValueError(
+                f"target entity {self._target_entity_id} occurs more than once on {duplicate}"
+            )
+
+        target_split: MaskedPanels = {}
+        for name, panel in split.items():
+            if not panel.values.index.equals(source_index):
+                raise ValueError(
+                    f"dataset '{name}' is not aligned with '{self._feature_dataset_name}'"
+                )
+            target_split[name] = panel.slice_rows(keep)
+        return target_split
 
     def _target_position(self, index: pd.Index) -> int:
         """Resolve exactly one target row inside a single-date cross-section."""
@@ -179,10 +205,10 @@ class FmgCtct1Estimator(FmgCtcstEstimator):
 
     def _forward_batch(self, windows: _Windows, batch: Batch) -> TrainingBatchOutput:
         """Evaluate one chronological date block as a single-asset portfolio."""
-        assert isinstance(self._model, FmgCtct1)
+        assert self._model is not None
         objective = self._loss
         if objective is None:
-            raise RuntimeError("FMG-CTCT-1 objective is unavailable during training")
+            raise RuntimeError(f"{self._MODEL_NAME} objective is unavailable during training")
 
         n_dates = len(batch.dates)
         allocations = torch.zeros(n_dates, 1, device=self._device)

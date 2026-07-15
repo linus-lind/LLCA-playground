@@ -8,6 +8,7 @@ from llca.mappers.config_validation import ConfigField, as_list, check_fields, i
 from llca.mappers.model.mapper import EstimatorFactory, model_registry
 from llca.models.estimators.fmg_ctcst_estimator import FmgCtcstEstimator
 from llca.models.estimators.fmg_ctct_1_estimator import FmgCtct1Estimator
+from llca.models.estimators.fmg_ctt_estimator import FmgCttEstimator
 
 _SCORE_ACTIVATIONS = ("identity", "softsign", "tanh")
 
@@ -217,9 +218,8 @@ def _validate_fmg_ctcst(cfg: DictConfig) -> list[str]:
     return _validate_fmg_common(cfg)
 
 
-@model_registry.register_validator("fmg-ctct-1")
-def _validate_fmg_ctct_1(cfg: DictConfig) -> list[str]:
-    """Validate target identity and the direct single-asset allocation contract."""
+def _validate_single_asset_allocation(cfg: DictConfig, model_name: str) -> list[str]:
+    """Validate target identity and the shared direct-allocation contract."""
     errors = _validate_fmg_common(cfg)
     model = cfg.model
     target_errors = check_fields(model, "model", [ConfigField("target", "mapping")])
@@ -228,18 +228,40 @@ def _validate_fmg_ctct_1(cfg: DictConfig) -> list[str]:
         errors.extend(check_fields(model.target, "model.target", _TARGET_FIELDS))
 
     if model.get("score_activation") != "tanh":
-        errors.append("model.score_activation must be 'tanh' for fmg-ctct-1 allocations")
+        errors.append(f"model.score_activation must be 'tanh' for {model_name} allocations")
 
     loss = cfg.get("loss")
     if not isinstance(loss, DictConfig) or loss.get("name") != "portfolio":
-        errors.append("fmg-ctct-1 requires loss.name 'portfolio'")
+        errors.append(f"{model_name} requires loss.name 'portfolio'")
         return errors
     if loss.get("normalization") != "bounded":
-        errors.append("fmg-ctct-1 requires loss.normalization 'bounded'")
+        errors.append(f"{model_name} requires loss.normalization 'bounded'")
     leverage = loss.get("leverage")
     if not isinstance(leverage, int | float) or isinstance(leverage, bool) or leverage != 1.0:
-        errors.append("fmg-ctct-1 requires loss.leverage 1.0")
+        errors.append(f"{model_name} requires loss.leverage 1.0")
     return errors
+
+
+@model_registry.register_validator("fmg-ctct-1")
+def _validate_fmg_ctct_1(cfg: DictConfig) -> list[str]:
+    """Validate the target-query single-asset allocation model."""
+    return _validate_single_asset_allocation(cfg, "fmg-ctct-1")
+
+
+@model_registry.register_validator("fmg-ctt")
+def _validate_fmg_ctt(cfg: DictConfig) -> list[str]:
+    """Validate the temporal-only single-asset allocation model."""
+    return _validate_single_asset_allocation(cfg, "fmg-ctt")
+
+
+def _validate_single_asset_objective(model_name: str, loss: nn.Module | None) -> None:
+    """Fail safely when builders are called without package-level validation."""
+    if loss is None:
+        raise ValueError(f"{model_name} requires a loss function")
+    if getattr(loss, "normalization", None) != "bounded":
+        raise ValueError(f"{model_name} requires a bounded portfolio objective")
+    if float(getattr(loss, "leverage", float("nan"))) != 1.0:
+        raise ValueError(f"{model_name} requires portfolio leverage 1.0")
 
 
 @model_registry.register("fmg-ctct-1")
@@ -250,13 +272,20 @@ def _build_fmg_ctct_1(
     **_: object,
 ) -> EstimatorFactory:
     """Bind the target-query model configuration to its allocation estimator."""
-    if loss is None:
-        raise ValueError("fmg-ctct-1 requires a loss function")
-    if getattr(loss, "normalization", None) != "bounded":
-        raise ValueError("fmg-ctct-1 requires a bounded portfolio objective")
-    if float(getattr(loss, "leverage", float("nan"))) != 1.0:
-        raise ValueError("fmg-ctct-1 requires portfolio leverage 1.0")
+    _validate_single_asset_objective("fmg-ctct-1", loss)
     return partial(FmgCtct1Estimator, config=cfg, loss=loss)
+
+
+@model_registry.register("fmg-ctt")
+def _build_fmg_ctt(
+    cfg: DictConfig,
+    *,
+    loss: nn.Module | None = None,
+    **_: object,
+) -> EstimatorFactory:
+    """Bind the temporal-only model configuration to its target estimator."""
+    _validate_single_asset_objective("fmg-ctt", loss)
+    return partial(FmgCttEstimator, config=cfg, loss=loss)
 
 
 @model_registry.register("fmg-ctct-2")

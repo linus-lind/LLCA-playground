@@ -1,0 +1,7 @@
+defaults:
+  - train
+  - override model: "fmg-ctt"
+  - override loss: "portfolio-single-asset"
+  - _self_
+
+experiment_name: "fmg-ctt"

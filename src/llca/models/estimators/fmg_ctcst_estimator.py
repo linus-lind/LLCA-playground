@@ -191,7 +191,7 @@ class FmgCtcstEstimator(TrainableEstimator[Batch]):
         )
         index = cast(pd.MultiIndex, raw_index)
         supervision, observed = self._supervision(split, index)
-        keep = observed & ~torch.isnan(supervision)
+        keep = observed & torch.isfinite(supervision)
         keep_np = keep.numpy()
 
         features_raw = cast(WindowedTensor, tensors["features"])
