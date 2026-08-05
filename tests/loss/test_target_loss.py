@@ -4,7 +4,7 @@ import torch
 from omegaconf import OmegaConf
 
 from llca.mappers.loss import build_loss
-from llca.training.modules.training_diagnostics import objective_diagnostics
+from llca.models.estimators.objective_output import objective_diagnostics
 
 
 class TargetLossDiagnosticsTest(unittest.TestCase):

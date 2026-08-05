@@ -1,5 +1,7 @@
 """Binary cross-entropy objective plugin with task-specific diagnostics."""
 
+from __future__ import annotations
+
 from omegaconf import DictConfig
 from torch import nn
 

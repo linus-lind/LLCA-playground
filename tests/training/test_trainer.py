@@ -8,7 +8,12 @@ from unittest.mock import MagicMock
 import torch
 from torch import Tensor, nn
 
-from llca.training.checkpointer import Checkpointer
+from llca.models.estimators.objective_output import (
+    PanelBatchMetadata,
+    TrainingBatchOutput,
+)
+from llca.training.engine.checkpointer import Checkpointer
+from llca.training.engine.trainer import Trainer
 from llca.training.modules.tracking import TrainingTracker
 from llca.training.modules.training_config import (
     AdamWConfig,
@@ -16,12 +21,7 @@ from llca.training.modules.training_config import (
     TrainingConfig,
     TrainingDiagnosticsConfig,
 )
-from llca.training.modules.training_diagnostics import (
-    PanelBatchMetadata,
-    TrainingBatchOutput,
-)
 from llca.training.modules.training_task import TrainingTask
-from llca.training.trainer import Trainer
 
 
 class _TwoComponentModel(nn.Module):

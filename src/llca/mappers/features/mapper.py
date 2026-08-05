@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from collections.abc import Callable
 from typing import cast
 
@@ -14,6 +16,7 @@ from llca.transforms.primitives import (
     log_change,
     log_difference,
     log_ratio,
+    net_ratio,
     range_location,
     ratio,
     relative_spread,
@@ -33,6 +36,33 @@ def _per_series(
     return series.groupby(level=entity).transform(lambda s: fn(s.to_numpy(dtype=float)))
 
 
+def _per_non_missing_series(
+    panel: pd.DataFrame, series: pd.Series, fn: Callable[[np.ndarray], np.ndarray]
+) -> pd.Series:
+    """Apply an event-frequency transform without counting unrelated sparse rows.
+
+    Point-in-time files may interleave quarterly and annual report rows.  A quarterly
+    four-observation change must therefore count the previous four *quarterly values*,
+    not the previous four physical rows.  Missing observations remain missing in the
+    returned frame; this helper is opt-in because skipping a missing daily price would
+    incorrectly bridge a trading gap.
+    """
+    values = np.full(len(panel), np.nan, dtype=float)
+    entity = entity_level(panel)
+    groups = (
+        [np.arange(len(panel), dtype=int)]
+        if entity is None
+        else panel.groupby(level=entity, sort=False).indices.values()
+    )
+    source = series.to_numpy(dtype=float)
+    for positions in groups:
+        rows = np.asarray(positions, dtype=int)
+        valid = np.isfinite(source[rows])
+        if bool(valid.any()):
+            values[rows[valid]] = fn(source[rows][valid])
+    return pd.Series(values, index=panel.index)
+
+
 @feature_registry.register(
     "log_change", columns=[ColumnRef("column"), ColumnRef("times", required=False)]
 )
@@ -42,7 +72,8 @@ def _log_change(panel: pd.DataFrame, spec: DictConfig) -> pd.Series:
     base = panel[spec.column]
     if spec.get("times") is not None:
         base = base * panel[spec.times]
-    values = _per_series(panel, base, lambda x: log_change(x, horizon=horizon))
+    transform = _per_non_missing_series if bool(spec.get("skip_missing", False)) else _per_series
+    values = transform(panel, base, lambda x: log_change(x, horizon=horizon))
     times = f"_{spec.times}" if spec.get("times") is not None else ""
     return values.rename(f"log_change_{spec.column}{times}_{horizon}")
 
@@ -102,6 +133,29 @@ def _ratio(panel: pd.DataFrame, spec: DictConfig) -> pd.Series:
         panel[spec.numerator].to_numpy(dtype=float), panel[spec.denominator].to_numpy(dtype=float)
     )
     return pd.Series(values, index=panel.index, name=f"ratio_{spec.numerator}_{spec.denominator}")
+
+
+@feature_registry.register(
+    "net_ratio",
+    columns=[
+        ColumnRef("add", kind="list"),
+        ColumnRef("subtract", kind="list", required=False),
+        ColumnRef("denominator"),
+    ],
+)
+def _net_ratio(panel: pd.DataFrame, spec: DictConfig) -> pd.Series:
+    """Divide a signed sum of columns by a denominator column, element-wise."""
+    add_columns = [str(column) for column in spec.add]
+    subtract_columns = [str(column) for column in (spec.get("subtract") or [])]
+    values = net_ratio(
+        [panel[column].to_numpy(dtype=float) for column in add_columns],
+        [panel[column].to_numpy(dtype=float) for column in subtract_columns],
+        panel[spec.denominator].to_numpy(dtype=float),
+    )
+    numerator = "_".join(add_columns) + "".join(f"_minus_{column}" for column in subtract_columns)
+    return pd.Series(
+        values, index=panel.index, name=f"net_ratio_{numerator}_over_{spec.denominator}"
+    )
 
 
 @feature_registry.register(

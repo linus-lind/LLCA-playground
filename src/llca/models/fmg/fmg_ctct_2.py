@@ -1,5 +1,7 @@
 """Full-universe FMG-CTCT-2 allocation network."""
 
+from __future__ import annotations
+
 from torch import Tensor
 
 from llca.models.fmg.base import FmgTemporalModel

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from omegaconf import DictConfig, ListConfig
 
 from llca.mappers.config_validation import (
@@ -9,17 +11,34 @@ from llca.mappers.config_validation import (
 from llca.mappers.features.mapper import feature_registry
 
 _HORIZON_FIELDS = [ConfigField("horizon", "int", required=False, positive=True)]
+_LOG_CHANGE_FIELDS = [
+    *_HORIZON_FIELDS,
+    ConfigField("skip_missing", "bool", required=False),
+]
 _SHIFT_FIELDS = [ConfigField("shift", "int", required=False)]
 
 
 @feature_registry.register_validator("log_change")
 def _validate_log_change(spec: DictConfig) -> list[str]:
-    return check_fields(spec, "features.log_change", _HORIZON_FIELDS)
+    return check_fields(spec, "features.log_change", _LOG_CHANGE_FIELDS)
 
 
 @feature_registry.register_validator("simple_change")
 def _validate_simple_change(spec: DictConfig) -> list[str]:
     return check_fields(spec, "features.simple_change", _HORIZON_FIELDS)
+
+
+@feature_registry.register_validator("net_ratio")
+def _validate_net_ratio(spec: DictConfig) -> list[str]:
+    """Require a non-empty ``add`` list and, when present, a list-valued ``subtract``."""
+    errors: list[str] = []
+    add = spec.get("add")
+    if not isinstance(add, list | ListConfig) or len(add) == 0:
+        errors.append("features.net_ratio.add must be a non-empty list of columns")
+    subtract = spec.get("subtract")
+    if subtract is not None and not isinstance(subtract, list | ListConfig):
+        errors.append("features.net_ratio.subtract must be a list of columns")
+    return errors
 
 
 @feature_registry.register_validator("cross_sectional_median")

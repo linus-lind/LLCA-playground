@@ -1,0 +1,16 @@
+name: "rf"
+inputs:
+  features: "daily_values"
+  context:
+    - "firm_characteristics"
+    - "macro"
+supervision:
+  dataset: "loss"
+  column: "fwd_return"
+# Cross-sectional random-forest regressor of the supervision return; its forecast is used
+# as a portfolio score, so the analytics comparison forms weights with the same objective.
+n_estimators: 200
+max_depth: 12
+min_samples_leaf: 50
+max_features: "sqrt"
+bootstrap: true

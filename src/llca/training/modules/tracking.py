@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Protocol
 
-from llca.training.modules.training_diagnostics import BatchMetadata
+from llca.models.estimators.objective_output import BatchMetadata
 
 
 class TrainingTracker(Protocol):

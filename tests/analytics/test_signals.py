@@ -1,174 +1,211 @@
 import unittest
-from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
 
-from llca.analytics.modules.test_evaluation import TestEvaluation
-from llca.analytics.plots import plot_evaluation
-from llca.analytics.signals import evaluate_signal
+from llca.analytics.evaluation.signals import evaluate_signal
+from llca.analytics.modules.signal_evaluation import SignalEvaluation
 from llca.models.estimators.prediction import PredictionOutput
 
 
-def _panel_index() -> pd.MultiIndex:
-    return pd.MultiIndex.from_product(
-        [pd.date_range("2024-01-01", periods=4), ["A", "B", "C", "D"]],
-        names=["date", "instrument"],
+def _evaluate(
+    predictions: PredictionOutput,
+    target: pd.Series,
+    *,
+    decisions: pd.Series | None = None,
+    rolling_window: int = 2,
+    bucket_count: int = 2,
+    active_weight_threshold: float = 0.0001,
+) -> SignalEvaluation:
+    return evaluate_signal(
+        predictions,
+        target,
+        decisions=decisions,
+        bucket_count=bucket_count,
+        target_threshold=0.0,
+        active_weight_threshold=active_weight_threshold,
+        annualization_periods=252,
+        rolling_window=rolling_window,
+        signal_decay_periods=(0, 1),
     )
 
 
 class SignalEvaluationTest(unittest.TestCase):
-    def test_portfolio_scores_report_cross_sectional_ic_and_monotone_buckets(self) -> None:
-        index = _panel_index()
+    def test_cross_section_uses_same_date_ic_and_keeps_directional_roc(self) -> None:
+        dates = pd.date_range("2024-01-01", periods=4, name="date")
+        index = pd.MultiIndex.from_product(
+            [dates, ["A", "B", "C", "D"]],
+            names=["date", "instrument"],
+        )
         target = pd.Series(np.tile([-0.02, -0.01, 0.01, 0.02], 4), index=index)
         predictions = PredictionOutput(kind="portfolio", values=target.rename("score"))
 
-        result = evaluate_signal(
-            predictions,
-            target,
-            bucket_count=4,
-            probability_bins=4,
-            classification_threshold=0.5,
-            target_threshold=0.0,
-            annualization_periods=252,
-            rolling_window=2,
-            signal_decay_periods=(0, 1),
-        )
+        result = _evaluate(predictions, target)
 
+        self.assertEqual(result.ic_basis, "cross_sectional")
+        np.testing.assert_allclose(result.per_date["pearson_ic"], 1.0)
+        np.testing.assert_allclose(result.per_date["rank_ic"], 1.0)
         self.assertAlmostEqual(result.metrics["mean_daily_rank_ic"], 1.0)
         self.assertAlmostEqual(result.metrics["directional_accuracy"], 1.0)
-        self.assertAlmostEqual(result.metrics["bucket_monotonicity"], 1.0)
-        self.assertGreater(result.metrics["top_minus_bottom_outcome"], 0.0)
+        self.assertAlmostEqual(result.metrics["roc_auc"], 1.0)
+        self.assertEqual(result.confusion.to_numpy().trace(), len(target))
+        self.assertIsNotNone(result.roc)
         self.assertIn("rank_ic_ir", result.rolling)
         self.assertEqual(list(result.decay.index), [0, 1])
+        self.assertIn("basis_rank_ic", result.decay)
 
-    def test_regression_reports_error_and_calibration_metrics(self) -> None:
-        index = _panel_index()
-        target = pd.Series(np.linspace(-0.03, 0.03, len(index)), index=index)
-        predictions = PredictionOutput(kind="regression", values=target.rename("forecast"))
+    def test_single_asset_uses_trailing_time_series_ic(self) -> None:
+        dates = pd.date_range("2024-01-01", periods=6, name="date")
+        index = pd.MultiIndex.from_product(
+            [dates, ["A"]],
+            names=["date", "instrument"],
+        )
+        target = pd.Series(np.arange(1.0, 7.0), index=index)
+        predictions = PredictionOutput(kind="portfolio", values=target.rename("score"))
 
-        result = evaluate_signal(
-            predictions,
+        result = _evaluate(predictions, target, rolling_window=3)
+
+        self.assertEqual(result.ic_basis, "rolling_time_series")
+        self.assertTrue(result.per_date["rank_ic"].iloc[:2].isna().all())
+        np.testing.assert_allclose(result.per_date["rank_ic"].iloc[2:], 1.0)
+        np.testing.assert_allclose(result.per_date["pearson_ic"].iloc[2:], 1.0)
+        self.assertAlmostEqual(result.metrics["mean_daily_rank_ic"], 1.0)
+
+    def test_alternating_entities_without_a_cross_section_use_time_series_ic(self) -> None:
+        dates = pd.date_range("2024-01-01", periods=6, name="date")
+        index = pd.MultiIndex.from_arrays(
+            [dates, ["A", "B", "A", "B", "A", "B"]],
+            names=["date", "instrument"],
+        )
+        target = pd.Series(np.arange(1.0, 7.0), index=index)
+
+        result = _evaluate(
+            PredictionOutput(kind="portfolio", values=target.rename("score")),
             target,
-            bucket_count=4,
-            probability_bins=4,
-            classification_threshold=0.5,
-            target_threshold=0.0,
-            annualization_periods=252,
-            rolling_window=2,
-            signal_decay_periods=(0, 1),
+            rolling_window=3,
         )
 
-        self.assertAlmostEqual(result.metrics["mae"], 0.0)
-        self.assertAlmostEqual(result.metrics["rmse"], 0.0)
-        self.assertAlmostEqual(result.metrics["r_squared"], 1.0)
-        self.assertAlmostEqual(result.metrics["calibration_slope"], 1.0)
+        self.assertEqual(result.ic_basis, "rolling_time_series")
+        np.testing.assert_allclose(result.per_date["rank_ic"].iloc[2:], 1.0)
 
-    def test_probabilistic_regression_reports_quantile_quality_and_coverage(self) -> None:
-        index = _panel_index()
-        target = pd.Series(np.linspace(-0.03, 0.03, len(index)), index=index)
-        quantiles = pd.DataFrame(
-            {
-                0.1: target - 0.01,
-                0.5: target,
-                0.9: target + 0.01,
-            },
-            index=index,
+    def test_cross_sectional_buckets_rank_within_each_date(self) -> None:
+        dates = pd.date_range("2024-01-01", periods=2, name="date")
+        index = pd.MultiIndex.from_product(
+            [dates, ["A", "B"]],
+            names=["date", "instrument"],
         )
-        predictions = PredictionOutput(
-            kind="regression",
-            values=target.rename("forecast"),
-            quantiles=quantiles,
-        )
+        scores = pd.Series([1.0, 2.0, 100.0, 200.0], index=index)
+        target = pd.Series([0.0, 10.0, 100.0, 110.0], index=index)
 
-        result = evaluate_signal(
-            predictions,
+        result = _evaluate(PredictionOutput(kind="portfolio", values=scores), target)
+
+        self.assertEqual(result.ic_basis, "cross_sectional")
+        np.testing.assert_allclose(result.buckets["mean_outcome"], [50.0, 60.0])
+
+    def test_cross_sectional_buckets_drop_singletons_and_span_requested_range(self) -> None:
+        dates = pd.date_range("2024-01-01", periods=2, name="date")
+        index = pd.MultiIndex.from_tuples(
+            [(dates[0], "A"), (dates[0], "B"), (dates[1], "A")],
+            names=["date", "instrument"],
+        )
+        scores = pd.Series([1.0, 2.0, 100.0], index=index)
+        target = pd.Series([0.0, 1.0, 100.0], index=index)
+
+        result = _evaluate(
+            PredictionOutput(kind="portfolio", values=scores),
             target,
-            bucket_count=4,
-            probability_bins=4,
-            classification_threshold=0.5,
-            target_threshold=0.0,
-            annualization_periods=252,
-            rolling_window=2,
-            signal_decay_periods=(0, 1),
+            bucket_count=10,
         )
 
-        self.assertAlmostEqual(result.metrics["pinball_loss_q0.5"], 0.0)
-        self.assertAlmostEqual(result.metrics["central_interval_empirical_coverage"], 1.0)
-        self.assertAlmostEqual(result.metrics["central_interval_average_width"], 0.02)
-        self.assertIsNotNone(result.calibration)
+        self.assertEqual(list(result.buckets.index), [1, 10])
+        self.assertEqual(int(result.buckets["observations"].sum()), 2)
 
-        evaluation = TestEvaluation(
-            predictions=predictions,
-            signal=result,
-            objective_metrics={},
-            portfolio=None,
-            valid_observations=len(target),
-            dates=4,
+    def test_directional_accuracy_equal_weights_dates_not_observations(self) -> None:
+        date_a, date_b = pd.Timestamp("2024-01-01"), pd.Timestamp("2024-01-02")
+        index = pd.MultiIndex.from_tuples(
+            [
+                (date_a, "A"),
+                (date_a, "B"),
+                (date_a, "C"),
+                (date_a, "D"),
+                (date_b, "A"),
+                (date_b, "B"),
+            ],
+            names=["date", "instrument"],
         )
-        with patch("matplotlib.pyplot.show") as show:
-            plot_evaluation(evaluation)
-        show.assert_called_once()
+        target = pd.Series([1.0, 2.0, 3.0, 4.0, 1.0, 2.0], index=index)
+        scores = pd.Series([1.0, 2.0, 3.0, 4.0, -1.0, -2.0], index=index)
 
-    def test_binary_classification_reports_discrimination_and_calibration(self) -> None:
-        index = _panel_index()
-        actual = pd.Series(np.tile([0, 0, 1, 1], 4), index=index)
-        probability = pd.Series(np.tile([0.05, 0.2, 0.8, 0.95], 4), index=index)
-        predictions = PredictionOutput(
-            kind="binary",
-            values=probability.rename("decision_score"),
-            probabilities=probability.rename("probability"),
+        result = _evaluate(PredictionOutput(kind="portfolio", values=scores), target)
+
+        self.assertAlmostEqual(result.metrics["directional_accuracy"], 0.5)
+        self.assertAlmostEqual(result.metrics["pooled_directional_accuracy"], 4.0 / 6.0)
+        np.testing.assert_allclose(result.per_date["hit_rate"], [1.0, 0.0])
+
+    def test_neutral_allocations_are_directional_abstentions(self) -> None:
+        date = pd.Timestamp("2024-01-01")
+        index = pd.MultiIndex.from_product(
+            [[date], ["A", "B", "C", "D"]],
+            names=["date", "instrument"],
+        )
+        target = pd.Series([1.0, -1.0, -1.0, 1.0], index=index)
+        scores = pd.Series([-4.0, -3.0, 3.0, 4.0], index=index)
+        decisions = pd.Series([0.0, 0.00001, -0.5, 0.5], index=index)
+
+        result = _evaluate(
+            PredictionOutput(kind="portfolio", values=scores),
+            target,
+            decisions=decisions,
         )
 
-        result = evaluate_signal(
-            predictions,
-            actual,
-            bucket_count=4,
-            probability_bins=4,
-            classification_threshold=0.5,
-            target_threshold=0.0,
-            annualization_periods=252,
-            rolling_window=2,
-            signal_decay_periods=(0, 1),
-        )
-
-        self.assertAlmostEqual(result.metrics["accuracy"], 1.0)
+        self.assertEqual(result.metrics["active_directional_observations"], 2.0)
+        self.assertAlmostEqual(result.metrics["directional_accuracy"], 1.0)
+        self.assertAlmostEqual(result.metrics["pooled_directional_accuracy"], 1.0)
+        self.assertEqual(int(result.confusion.to_numpy().sum()), 2)
         self.assertAlmostEqual(result.metrics["roc_auc"], 1.0)
-        self.assertLess(result.metrics["brier_score"], 0.05)
-        self.assertIsNotNone(result.confusion)
-        self.assertIsNotNone(result.roc)
-        self.assertIsNotNone(result.precision_recall)
+        self.assertEqual(int(result.buckets["directional_observations"].sum()), 2)
 
-    def test_multiclass_classification_reports_macro_metrics(self) -> None:
-        dates = pd.date_range("2024-01-01", periods=2)
-        index = pd.MultiIndex.from_product([dates, ["A", "B", "C"]], names=["date", "instrument"])
-        target = pd.Series(["down", "flat", "up"] * 2, index=index)
-        probabilities = pd.DataFrame(
-            np.tile(np.eye(3), (2, 1)),
-            index=index,
-            columns=["down", "flat", "up"],
-        )
-        predictions = PredictionOutput(
-            kind="multiclass",
-            values=probabilities,
-            probabilities=probabilities,
-        )
+    def test_cash_only_allocation_has_no_directional_skill(self) -> None:
+        dates = pd.date_range("2024-01-01", periods=4, name="date")
+        target = pd.Series([-1.0, 1.0, -1.0, 1.0], index=dates)
+        scores = target.rename("score")
+        decisions = pd.Series(0.0, index=dates)
 
-        result = evaluate_signal(
-            predictions,
+        result = _evaluate(
+            PredictionOutput(kind="portfolio", values=scores),
             target,
-            bucket_count=3,
-            probability_bins=3,
-            classification_threshold=0.5,
-            target_threshold=0.0,
-            annualization_periods=252,
-            rolling_window=2,
-            signal_decay_periods=(0, 1),
+            decisions=decisions,
         )
 
-        self.assertAlmostEqual(result.metrics["accuracy"], 1.0)
-        self.assertAlmostEqual(result.metrics["macro_f1"], 1.0)
-        self.assertAlmostEqual(result.metrics["multiclass_brier_score"], 0.0)
+        self.assertTrue(np.isnan(result.metrics["directional_accuracy"]))
+        self.assertTrue(np.isnan(result.metrics["pooled_directional_accuracy"]))
+        self.assertTrue(np.isnan(result.metrics["roc_auc"]))
+        self.assertEqual(int(result.confusion.to_numpy().sum()), 0)
+        self.assertTrue(result.per_date["hit_rate"].isna().all())
+        self.assertTrue(result.buckets["hit_rate"].isna().all())
+
+    def test_unimplemented_prediction_kinds_fail_explicitly(self) -> None:
+        index = pd.date_range("2024-01-01", periods=3, name="date")
+        target = pd.Series([0.0, 1.0, 2.0], index=index)
+        cases = (
+            PredictionOutput(kind="regression", values=target.rename("forecast")),
+            PredictionOutput(kind="binary", values=target.rename("score")),
+            PredictionOutput(
+                kind="multiclass",
+                values=pd.DataFrame(
+                    {
+                        "a": [1.0, 0.0, 0.0],
+                        "b": [0.0, 1.0, 0.0],
+                        "c": [0.0, 0.0, 1.0],
+                    },
+                    index=index,
+                ),
+            ),
+        )
+        for predictions in cases:
+            with self.subTest(kind=predictions.kind):
+                with self.assertRaisesRegex(NotImplementedError, predictions.kind):
+                    _evaluate(predictions, target)
 
 
 if __name__ == "__main__":

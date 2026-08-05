@@ -1,0 +1,98 @@
+asset_returns:
+  - name: "trading_calendar_filter"
+    calendar: "${calendar}"
+  - name: "corporate_adjustment"
+    price_columns: ["open"]
+    price_factor: "price_adjustment_factor"
+  - name: "deduplicate"
+  - name: "consistency_check"
+    constraints:
+      - name: "positive"
+        expressions:
+          - left: ["open"]
+            op: "gt"
+            right: 0
+        invalidate: "left"
+
+fama_french:
+  - name: "trading_calendar_filter"
+    calendar: "${calendar}"
+  - name: "deduplicate"
+
+benchmark_portfolios:
+  - name: "trading_calendar_filter"
+    calendar: "${calendar}"
+  - name: "deduplicate"
+
+firm_characteristics:
+  - name: "deduplicate"
+  - name: "consistency_check"
+    constraints:
+      - name: "positive"
+        expressions:
+          - left: [
+              "total_assets_quarterly",
+              "common_shares_outstanding_quarterly",
+              "market_value_total_quarter_end",
+              "total_assets_annual"
+            ]
+            op: "gt"
+            right: 0
+        invalidate: "left"
+      - name: "non_negative"
+        expressions:
+          - left: [
+              "current_assets_quarterly",
+              "cash_short_term_investments_quarterly",
+              "cost_of_goods_sold_quarterly",
+              "long_term_debt_quarterly",
+              "inventories_quarterly",
+              "current_liabilities_quarterly",
+              "total_liabilities_quarterly",
+              "total_receivables_quarterly",
+              "net_sales_quarterly",
+              "research_development_expense_quarterly",
+              "selling_general_admin_expense_quarterly",
+              "capital_expenditures_annual",
+              "common_dividends_annual",
+              "interest_expense_total_annual"
+            ]
+            op: "ge"
+            right: 0
+        invalidate: "left"
+  - name: "impute"
+    fill_zero: [
+      "research_development_expense_quarterly",
+      "deferred_taxes_investment_tax_credit_quarterly"
+    ]
+
+
+macro:
+  - name: "trading_calendar_filter"
+    calendar: "${calendar}"
+  - name: "deduplicate"
+  - name: "consistency_check"
+    constraints:
+      - name: "positive"
+        expressions:
+          - left: ["move", "vix"]
+            op: "gt"
+            right: 0
+        invalidate: "left"
+  - name: "missing_threshold_filter"
+    threshold: 0.05
+    columns: [
+      "nfci",
+      "tips_10y_yield",
+      "baa10y_spread",
+      "move",
+      "vix"
+    ]
+  - name: "impute"
+    ffill: [
+      "nfci",
+      "tips_10y_yield",
+      "baa10y_spread",
+      "move",
+      "vix"
+    ]

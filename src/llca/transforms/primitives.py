@@ -1,3 +1,6 @@
+from __future__ import annotations
+
+from collections.abc import Sequence
 from typing import cast
 
 import numpy as np
@@ -66,6 +69,36 @@ def ratio(numerator: np.ndarray, denominator: np.ndarray) -> np.ndarray:
     denominator = _as_float(denominator)
     _require_same_shape(numerator, denominator)
     out = np.full(numerator.shape, np.nan, dtype=float)
+    nonzero = denominator != 0
+    out[nonzero] = numerator[nonzero] / denominator[nonzero]
+    return out
+
+
+def net_ratio(
+    add: Sequence[np.ndarray],
+    subtract: Sequence[np.ndarray],
+    denominator: np.ndarray,
+) -> np.ndarray:
+    """Return ``(sum(add) - sum(subtract)) / denominator`` element-wise.
+
+    Generalises :func:`ratio` to a signed linear combination in the numerator, so
+    scaled aggregates such as gross profit ``(sales - cogs) / assets`` or cash-flow
+    accruals ``(earnings - operating_cash_flow) / assets`` are expressible without a
+    bespoke transform. A zero denominator yields NaN, matching :func:`ratio`, and any
+    missing (NaN) term propagates into the affected rows so an incomplete numerator is
+    never silently treated as zero. Every array must share the denominator's shape.
+    """
+    denominator = _as_float(denominator)
+    numerator = np.zeros(denominator.shape, dtype=float)
+    for values in add:
+        term = _as_float(values)
+        _require_same_shape(numerator, term)
+        numerator = numerator + term
+    for values in subtract:
+        term = _as_float(values)
+        _require_same_shape(numerator, term)
+        numerator = numerator - term
+    out = np.full(denominator.shape, np.nan, dtype=float)
     nonzero = denominator != 0
     out[nonzero] = numerator[nonzero] / denominator[nonzero]
     return out

@@ -60,15 +60,19 @@ class FmgCtct2NetworkTest(unittest.TestCase):
 
 class FmgCtct2ConfigurationTest(unittest.TestCase):
     def test_canonical_hydra_model_is_registered_and_valid(self) -> None:
-        config_dir = str((Path(__file__).resolve().parents[2] / "hydra" / "configs").resolve())
+        config_dir = str(
+            (Path(__file__).resolve().parents[2] / "hydra" / "configs" / "training").resolve()
+        )
         with initialize_config_dir(config_dir=config_dir, version_base=None):
-            cfg = compose(config_name="train")
+            cfg = compose(config_name="train", overrides=["experiment=fmg-ctct-2"])
 
         self.assertEqual(cfg.model.name, "fmg-ctct-2")
         self.assertEqual(model_registry.validate("fmg-ctct-2", cfg), [])
 
     def test_regression_objective_changes_native_prediction_semantics(self) -> None:
-        config_dir = str((Path(__file__).resolve().parents[2] / "hydra" / "configs").resolve())
+        config_dir = str(
+            (Path(__file__).resolve().parents[2] / "hydra" / "configs" / "training").resolve()
+        )
         with initialize_config_dir(config_dir=config_dir, version_base=None):
             cfg = compose(
                 config_name="train",

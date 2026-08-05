@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 TRAINING_MANIFEST_ARTIFACT = "pipeline/training_manifest.json"
 """Canonical, resolved training contract attached to every model-producing run."""
 

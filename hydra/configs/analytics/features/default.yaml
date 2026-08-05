@@ -1,0 +1,72 @@
+asset_returns:
+  - { name: "simple_change", column: "open", horizon: 1, shift: "${neg:${analytics.return_realization_lag}}", as: "fwd_return" }
+
+fama_french:
+  - { name: "passthrough", column: "mktrf", shift: "${neg:${analytics.return_realization_lag}}", as: "mktrf" }
+  - { name: "passthrough", column: "smb", shift: "${neg:${analytics.return_realization_lag}}", as: "smb" }
+  - { name: "passthrough", column: "hml", shift: "${neg:${analytics.return_realization_lag}}", as: "hml" }
+  - { name: "passthrough", column: "rmw", shift: "${neg:${analytics.return_realization_lag}}", as: "rmw" }
+  - { name: "passthrough", column: "cma", shift: "${neg:${analytics.return_realization_lag}}", as: "cma" }
+  - { name: "passthrough", column: "umd", shift: "${neg:${analytics.return_realization_lag}}", as: "umd" }
+  - { name: "passthrough", column: "rf", shift: "${neg:${analytics.return_realization_lag}}", as: "rf" }
+
+benchmark_portfolios:
+  - { name: "passthrough", column: "bm_small_low", shift: "${neg:${analytics.return_realization_lag}}", as: "bm_small_low" }
+  - { name: "passthrough", column: "bm_small_mid", shift: "${neg:${analytics.return_realization_lag}}", as: "bm_small_mid" }
+  - { name: "passthrough", column: "bm_small_high", shift: "${neg:${analytics.return_realization_lag}}", as: "bm_small_high" }
+  - { name: "passthrough", column: "bm_big_low", shift: "${neg:${analytics.return_realization_lag}}", as: "bm_big_low" }
+  - { name: "passthrough", column: "bm_big_mid", shift: "${neg:${analytics.return_realization_lag}}", as: "bm_big_mid" }
+  - { name: "passthrough", column: "bm_big_high", shift: "${neg:${analytics.return_realization_lag}}", as: "bm_big_high" }
+  - { name: "passthrough", column: "op_small_low", shift: "${neg:${analytics.return_realization_lag}}", as: "op_small_low" }
+  - { name: "passthrough", column: "op_small_mid", shift: "${neg:${analytics.return_realization_lag}}", as: "op_small_mid" }
+  - { name: "passthrough", column: "op_small_high", shift: "${neg:${analytics.return_realization_lag}}", as: "op_small_high" }
+  - { name: "passthrough", column: "op_big_low", shift: "${neg:${analytics.return_realization_lag}}", as: "op_big_low" }
+  - { name: "passthrough", column: "op_big_mid", shift: "${neg:${analytics.return_realization_lag}}", as: "op_big_mid" }
+  - { name: "passthrough", column: "op_big_high", shift: "${neg:${analytics.return_realization_lag}}", as: "op_big_high" }
+  - { name: "passthrough", column: "inv_small_low", shift: "${neg:${analytics.return_realization_lag}}", as: "inv_small_low" }
+  - { name: "passthrough", column: "inv_small_mid", shift: "${neg:${analytics.return_realization_lag}}", as: "inv_small_mid" }
+  - { name: "passthrough", column: "inv_small_high", shift: "${neg:${analytics.return_realization_lag}}", as: "inv_small_high" }
+  - { name: "passthrough", column: "inv_big_low", shift: "${neg:${analytics.return_realization_lag}}", as: "inv_big_low" }
+  - { name: "passthrough", column: "inv_big_mid", shift: "${neg:${analytics.return_realization_lag}}", as: "inv_big_mid" }
+  - { name: "passthrough", column: "inv_big_high", shift: "${neg:${analytics.return_realization_lag}}", as: "inv_big_high" }
+  - { name: "passthrough", column: "prior_small_low", shift: "${neg:${analytics.return_realization_lag}}", as: "prior_small_low" }
+  - { name: "passthrough", column: "prior_small_mid", shift: "${neg:${analytics.return_realization_lag}}", as: "prior_small_mid" }
+  - { name: "passthrough", column: "prior_small_high", shift: "${neg:${analytics.return_realization_lag}}", as: "prior_small_high" }
+  - { name: "passthrough", column: "prior_big_low", shift: "${neg:${analytics.return_realization_lag}}", as: "prior_big_low" }
+  - { name: "passthrough", column: "prior_big_mid", shift: "${neg:${analytics.return_realization_lag}}", as: "prior_big_mid" }
+  - { name: "passthrough", column: "prior_big_high", shift: "${neg:${analytics.return_realization_lag}}", as: "prior_big_high" }
+
+macro:
+  - { name: "passthrough", column: "nfci", as: "nfci" }
+  - { name: "passthrough", column: "baa10y_spread", as: "baa10y_spread" }
+  - { name: "passthrough", column: "tips_10y_yield", as: "tips_10y_yield" }
+  - { name: "passthrough", column: "move", as: "move" }
+  - { name: "passthrough", column: "vix", as: "vix" }
+
+firm_characteristics:
+  - { name: "ratio", numerator: "net_income_quarterly", denominator: "total_assets_quarterly", as: "return_on_assets" }
+  - { name: "ratio", numerator: "net_income_quarterly", denominator: "common_equity_quarterly", as: "return_on_equity" }
+  - { name: "net_ratio", add: ["net_sales_quarterly"], subtract: ["cost_of_goods_sold_quarterly"], denominator: "total_assets_quarterly", as: "gross_profitability" }
+  - { name: "ratio", numerator: "net_income_quarterly", denominator: "net_sales_quarterly", as: "net_margin" }
+  - { name: "ratio", numerator: "operating_income_after_depreciation_quarterly", denominator: "net_sales_quarterly", as: "operating_margin" }
+  - { name: "ratio", numerator: "net_sales_quarterly", denominator: "total_assets_quarterly", as: "asset_turnover" }
+  - { name: "ratio", numerator: "total_receivables_quarterly", denominator: "net_sales_quarterly", as: "receivables_to_sales" }
+  - { name: "ratio", numerator: "inventories_quarterly", denominator: "total_assets_quarterly", as: "inventory_to_assets" }
+  - { name: "ratio", numerator: "total_liabilities_quarterly", denominator: "total_assets_quarterly", as: "leverage" }
+  - { name: "ratio", numerator: "long_term_debt_quarterly", denominator: "total_assets_quarterly", as: "long_term_debt_ratio" }
+  - { name: "ratio", numerator: "current_assets_quarterly", denominator: "current_liabilities_quarterly", as: "current_ratio" }
+  - { name: "ratio", numerator: "cash_short_term_investments_quarterly", denominator: "total_assets_quarterly", as: "cash_to_assets" }
+  - { name: "ratio", numerator: "operating_income_after_depreciation_annual", denominator: "interest_expense_total_annual", as: "interest_coverage" }
+  - { name: "ratio", numerator: "research_development_expense_quarterly", denominator: "net_sales_quarterly", as: "rd_intensity" }
+  - { name: "ratio", numerator: "selling_general_admin_expense_quarterly", denominator: "net_sales_quarterly", as: "sga_intensity" }
+  - { name: "ratio", numerator: "capital_expenditures_annual", denominator: "total_assets_annual", as: "capex_intensity" }
+  - { name: "ratio", numerator: "common_dividends_annual", denominator: "net_income_annual", as: "dividend_payout" }
+  - { name: "net_ratio", add: ["income_before_extraordinary_items_annual"], subtract: ["operating_cash_flow_annual"], denominator: "total_assets_annual", as: "accruals" }
+  - { name: "log_change", column: "common_shares_outstanding_quarterly", horizon: 4, skip_missing: true, as: "net_share_issuance" }
+  - { name: "passthrough", column: "market_value_total_quarter_end", as: "size" }
+  - { name: "ratio", numerator: "net_income_quarterly", denominator: "market_value_total_quarter_end", as: "earnings_yield" }
+  - { name: "net_ratio", add: ["common_equity_quarterly", "deferred_taxes_investment_tax_credit_quarterly"], denominator: "market_value_total_quarter_end", as: "book_to_market" }
+  - { name: "ratio", numerator: "net_sales_quarterly", denominator: "market_value_total_quarter_end", as: "sales_to_price" }
+  - { name: "log_change", column: "net_sales_quarterly", horizon: 4, skip_missing: true, as: "revenue_growth" }
+  - { name: "log_change", column: "total_assets_quarterly", horizon: 4, skip_missing: true, as: "asset_growth" }
+  - { name: "log_change", column: "common_equity_quarterly", horizon: 4, skip_missing: true, as: "equity_growth" }

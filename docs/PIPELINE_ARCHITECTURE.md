@@ -18,9 +18,12 @@ Hydra composition
   -> objective-specific MLflow evidence
 ```
 
-There is one training root, `hydra/configs/train.yaml`. Group YAML files are reusable
-components. Experiment presets are thin compositions and must not duplicate an application
-root for every model.
+The training and analytics applications are two independent Hydra config roots,
+`hydra/configs/training/train.yaml` and `hydra/configs/analytics/analytics.yaml`. Each owns
+its own `data`, `preprocessing`, `features`, and `masking` groups, so the two applications
+can use structurally different datasets; nothing is shared implicitly. Within the training
+root, group YAML files are reusable components and experiment presets are thin compositions
+that must not duplicate an application root for every model.
 
 ## Data contracts
 

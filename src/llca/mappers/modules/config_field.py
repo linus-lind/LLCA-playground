@@ -1,4 +1,9 @@
+from __future__ import annotations
+
 from dataclasses import dataclass
+from typing import Literal
+
+type FieldKind = Literal["int", "number", "str", "bool", "list", "mapping"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -6,7 +11,7 @@ class ConfigField:
     """Declare reusable type, presence, range, and cardinality checks for one Hydra field."""
 
     name: str
-    kind: str
+    kind: FieldKind
     required: bool = True
     positive: bool = False
     minimum: float | None = None

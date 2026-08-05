@@ -11,12 +11,12 @@ from torch import Tensor
 
 from llca.data.modules.masked_panel import MaskedPanels
 from llca.models.estimators.estimator import Estimator
+from llca.models.estimators.objective_output import objective_loss
+from llca.training.engine.reproducibility import capture_rng_state
 from llca.training.modules.tracking import TrainingTracker
 from llca.training.modules.training_config import TrainingConfig
-from llca.training.modules.training_diagnostics import objective_loss
 from llca.training.modules.training_policy import TrainingPolicy
 from llca.training.modules.training_task import TrainingTask
-from llca.training.reproducibility import capture_rng_state
 
 
 class TorchEstimator[DataT](Estimator[DataT], ABC):
@@ -111,7 +111,7 @@ class TorchTrainableEstimator[BatchT](TorchEstimator[MaskedPanels], ABC):
         resume: bool = False,
     ) -> None:
         """Build a model task and execute it through the shared trainer."""
-        from llca.training.trainer import Trainer
+        from llca.training.engine.trainer import Trainer
 
         if not isinstance(training, TrainingConfig):
             raise TypeError(

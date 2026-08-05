@@ -16,16 +16,16 @@ from llca.models.estimators.fmg.base import (
     PreparedWindows,
     conv_layer_from_config,
 )
+from llca.models.estimators.objective_output import (
+    TrainingBatchOutput,
+    objective_diagnostics,
+    tensor_distribution_diagnostics,
+)
 from llca.models.estimators.prediction import PredictionOutput
 from llca.models.fmg import FmgCtct2
 from llca.models.fmg.base import FmgLocalModel
 from llca.models.utils.batching import Batch
 from llca.models.utils.sequences import WindowedTensor, build_sequences
-from llca.training.modules.training_diagnostics import (
-    TrainingBatchOutput,
-    objective_diagnostics,
-    tensor_distribution_diagnostics,
-)
 
 
 def score_metrics(

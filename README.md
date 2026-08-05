@@ -82,9 +82,10 @@ example, CTCT-2 can learn a return regression instead of a portfolio ranking:
   loss=mse training.epochs=3
 ```
 
-That run emits regression diagnostics such as MSE and MAE. Portfolio-only fields such as
-variance, turnover, or net exposure are not synthesized or logged. The same rule applies
-to classification and future custom objectives.
+That training run emits only the diagnostics supplied by its regression objective. The
+held-out Analytics application is currently production-ready for portfolio outputs only and
+rejects regression, binary, and multiclass predictions explicitly; their shared prediction
+kinds remain extension points rather than partial Analytics implementations.
 
 Every selected raw source is added and pushed to DVC before model preparation. Deterministic
 prepared data is cached by source SHA-256, selection, transformations, assembler, and
@@ -112,9 +113,11 @@ contract is summarized in [`docs/EXTENDING_MODELS.md`](docs/EXTENDING_MODELS.md)
 ## Held-out analytics
 
 Analytics loads immutable registered model versions, verifies local raw files against each
-run's archived SHA-256 data manifest, reconstructs the stored pipeline, and restricts
-predictions to the registered test interval. Cross-model comparisons use the intersection
-of prediction/target coverage and reject incompatible target values or return conventions.
+run's archived SHA-256 data manifest, reconstructs the stored pipeline and portfolio
+objective, and restricts predictions to the registered test interval. Cross-model
+comparisons use the intersection of prediction/target coverage and reject incompatible
+target values or return conventions. Only `portfolio` predictions are currently evaluated;
+the other typed estimator outputs fail before analytical calculations begin.
 
 ```powershell
 .\.venv\Scripts\python.exe -m llca.analytics `
@@ -125,6 +128,11 @@ of prediction/target coverage and reject incompatible target values or return co
 Publication artifacts are written below `reports/analytics` and archived in a dedicated
 MLflow analytics run. Registry version numbers, not mutable aliases, are the analytical
 identity.
+
+The complete execution, portfolio-accounting, risk-free, signal, inference, FF6/IPCA/timing,
+audit, and extension contracts are documented in the
+[`llca.analytics` module README](src/llca/analytics/README.md). Every exported table and
+figure is defined in [`docs/ANALYTICS_OUTPUTS.md`](docs/ANALYTICS_OUTPUTS.md).
 
 ## Quality gate
 

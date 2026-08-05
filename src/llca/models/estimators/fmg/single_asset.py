@@ -18,14 +18,14 @@ from llca.models.estimators.fmg.base import (
     PreparedWindows,
     RawWindows,
 )
-from llca.models.estimators.prediction import PredictionKind, PredictionOutput
-from llca.models.utils.batching import Batch
-from llca.models.utils.sequences import WindowedTensor, build_sequences
-from llca.training.modules.training_diagnostics import (
+from llca.models.estimators.objective_output import (
     TrainingBatchOutput,
     objective_diagnostics,
     tensor_distribution_diagnostics,
 )
+from llca.models.estimators.prediction import PredictionKind, PredictionOutput
+from llca.models.utils.batching import Batch
+from llca.models.utils.sequences import WindowedTensor, build_sequences
 
 
 def _allocation_metrics(

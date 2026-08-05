@@ -1,5 +1,7 @@
 """Validation for model-independent training runtime configuration."""
 
+from __future__ import annotations
+
 import torch
 from omegaconf import DictConfig
 

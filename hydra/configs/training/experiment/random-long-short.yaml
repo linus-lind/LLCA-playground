@@ -1,0 +1,12 @@
+# @package _global_
+defaults:
+  - override /model: "random-long-short"
+  - override /loss: "portfolio"
+  - override /training: "sklearn"
+
+experiment_name: "random-long-short"
+
+# Cross-sectional models use no input window; purge only the 2-day forward-return horizon.
+split:
+  purge_size: 2
+  lookback: 0

@@ -1,5 +1,7 @@
 """Build compact causal sequence references from indexed panel observations."""
 
+from __future__ import annotations
+
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 

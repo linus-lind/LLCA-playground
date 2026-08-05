@@ -3,7 +3,7 @@ import unittest
 import numpy as np
 import pandas as pd
 
-from llca.analytics.utils.data import restrict_to_test_period, test_window_with_history
+from llca.analytics.inputs.preparation import restrict_to_test_period, test_window_with_history
 from llca.data.modules.masked_panel import MaskedPanel
 from llca.models.estimators.prediction import PredictionOutput
 

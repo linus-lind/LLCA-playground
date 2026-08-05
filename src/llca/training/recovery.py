@@ -25,10 +25,10 @@ from llca.core.artifacts import (
     TRAINING_MANIFEST_ARTIFACT,
 )
 from llca.core.paths import CHECKPOINTS_DIR
+from llca.core.provenance.source import SOURCE_FINGERPRINT_TAG
+from llca.core.provenance.training_manifest import validate_training_manifest
 from llca.data.versioning import DataVersioningError, validate_data_manifest
-from llca.training.checkpointer import validate_training_checkpoint
-from llca.training.manifests.source import SOURCE_FINGERPRINT_TAG
-from llca.training.manifests.training import validate_training_manifest
+from llca.training.engine.checkpointer import validate_training_checkpoint
 from llca.training.modules.recovery_config import RecoveryConfig
 
 RUN_KIND_TAG = "llca.run_kind"

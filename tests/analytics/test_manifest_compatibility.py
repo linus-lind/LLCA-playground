@@ -1,6 +1,6 @@
 import unittest
 
-from llca.analytics.utils.manifest_compatibility import (
+from llca.analytics.inputs.registry import (
     canonical_data_manifest,
     canonical_training_manifest,
 )

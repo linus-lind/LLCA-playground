@@ -1,5 +1,7 @@
 """Map validated Hydra training configuration to reusable runtime objects."""
 
+from __future__ import annotations
+
 from omegaconf import DictConfig
 
 from llca.mappers.modules.registry import Registry

@@ -1,12 +1,12 @@
 import unittest
 from unittest.mock import patch
 
-from llca.training.modules.training_diagnostics import PanelBatchMetadata
-from llca.training.training_tracker import MlflowTrainingTracker
+from llca.models.estimators.objective_output import PanelBatchMetadata
+from llca.training.engine.training_tracker import MlflowTrainingTracker
 
 
 class TrainingTrackerTest(unittest.TestCase):
-    @patch("llca.training.training_tracker.MlflowClient")
+    @patch("llca.training.engine.training_tracker.MlflowClient")
     def test_logs_manifest_observation_throughput_and_clipping_share(
         self, client_type: object
     ) -> None:

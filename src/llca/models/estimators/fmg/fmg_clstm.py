@@ -1,5 +1,7 @@
 """Bind the target-only data path to the recurrent FMG-CLSTM model."""
 
+from __future__ import annotations
+
 from typing import cast
 
 from torch import Tensor

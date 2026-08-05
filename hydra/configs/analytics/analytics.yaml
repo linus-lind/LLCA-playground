@@ -1,0 +1,23 @@
+defaults:
+  - data: "default"
+  - preprocessing: "default"
+  - features: "default"
+  - masking: "sp500-membership"
+  - analytics: "default"
+  - _self_
+
+experiment_name: "fmg-analytics"
+mlflow_tracking_uri: "sqlite:///mlflow.db"
+analytics_experiment_name: "${experiment_name}-analytics"
+
+calendar: "XNYS"
+trading_year: 252
+
+hydra:
+  run:
+    dir: hydra/outputs/analytics/${now:%Y-%m-%d_%H-%M-%S}
+  sweep:
+    dir: hydra/multirun/analytics/${now:%Y-%m-%d_%H-%M-%S}
+    subdir: ${hydra.job.num}
+  job:
+    chdir: false

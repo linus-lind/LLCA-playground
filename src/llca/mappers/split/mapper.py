@@ -1,5 +1,7 @@
 """Build temporal split strategies independently from training execution."""
 
+from __future__ import annotations
+
 from typing import Any
 
 from omegaconf import DictConfig

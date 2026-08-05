@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from torch import Tensor, nn
 
 from llca.models.modules.context_encoder import ContextEncoder

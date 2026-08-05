@@ -1,14 +1,17 @@
+from __future__ import annotations
+
 from collections.abc import Callable, Iterable, Sequence
 from numbers import Integral, Real
 
 from omegaconf import DictConfig, ListConfig
 
 from llca.mappers.modules.column_ref import ColumnRef, referenced_columns
-from llca.mappers.modules.config_field import ConfigField
+from llca.mappers.modules.config_field import ConfigField, FieldKind
 from llca.mappers.modules.config_validation_error import ConfigValidationError
 
 __all__ = [
     "ConfigField",
+    "FieldKind",
     "as_list",
     "check_required_columns",
     "check_fields",
@@ -53,7 +56,7 @@ def is_number(value: object) -> bool:
     return not isinstance(value, bool) and isinstance(value, Real)
 
 
-_KIND_CHECKS: dict[str, Callable[[object], bool]] = {
+_KIND_CHECKS: dict[FieldKind, Callable[[object], bool]] = {
     "int": is_int,
     "number": is_number,
     "str": lambda value: isinstance(value, str),
@@ -61,7 +64,7 @@ _KIND_CHECKS: dict[str, Callable[[object], bool]] = {
     "list": lambda value: isinstance(value, list | ListConfig),
     "mapping": lambda value: isinstance(value, DictConfig),
 }
-_KIND_LABELS = {
+_KIND_LABELS: dict[FieldKind, str] = {
     "int": "an integer",
     "number": "a number",
     "str": "a string",

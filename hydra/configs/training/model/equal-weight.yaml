@@ -1,0 +1,6 @@
+name: "equal-weight"
+inputs:
+  features: "daily_values"
+supervision:
+  dataset: "loss"
+  column: "fwd_return"

@@ -1,3 +1,6 @@
+from __future__ import annotations
+
+
 class ConfigValidationError(Exception):
     """Aggregate independent Hydra validation failures into one actionable exception."""
 

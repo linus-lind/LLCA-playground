@@ -1,0 +1,108 @@
+models:
+  - name: "fmg-ctct-2"
+    version: 1
+    label: "fmg-ctct-2"
+  - name: "fmg-ctt"
+    version: 1
+    label: "fmg-ctt"
+  - name: "fmg-ctct-1"
+    version: 1
+    label: "fmg-ctct-1"
+
+device: "auto"
+annualization_periods: 252
+return_type: "log"
+return_realization_lag: 2
+signal_buckets: 10
+target_threshold: 0.0
+minimum_acceptable_return: 0.0
+var_levels: [0.95, 0.99]
+autocorrelation_lags: [1, 5, 21]
+worst_rolling_windows: [5, 21, 63]
+rolling_window: 63
+signal_decay_periods: [0, 1, 5, 10, 21, 63]
+active_weight_threshold: 0.0
+include_initial_trade: true
+hac_lag: null
+bootstrap_resamples: 2000
+bootstrap_block_length: 10
+bootstrap_seed: 42
+test_significance_level: 0.05
+multiple_testing_correction: "bh"
+show_plots: false
+evaluation_end: null
+
+output_dir: "reports/analytics"
+table_formats: ["png"]
+table_dpi: 500
+plot_formats: ["png"]
+plot_dpi: 500
+
+risk_free:
+  dataset: "fama_french"
+  column: "rf"
+
+factor_analysis:
+  enabled: true
+  aligning_dataset: "asset_returns"
+  factors:
+    dataset: "fama_french"
+    ff6: ["mktrf", "smb", "hml", "rmw", "cma", "umd"]
+    market: "mktrf"
+  spanning:
+    dataset: "benchmark_portfolios"
+    scale: 0.01
+    excess: true
+    portfolios:
+      - "bm_small_low"
+      - "bm_small_mid"
+      - "bm_small_high"
+      - "bm_big_low"
+      - "bm_big_mid"
+      - "bm_big_high"
+      - "op_small_low"
+      - "op_small_mid"
+      - "op_small_high"
+      - "op_big_low"
+      - "op_big_mid"
+      - "op_big_high"
+      - "inv_small_low"
+      - "inv_small_mid"
+      - "inv_small_high"
+      - "inv_big_low"
+      - "inv_big_mid"
+      - "inv_big_high"
+      - "prior_small_low"
+      - "prior_small_mid"
+      - "prior_small_high"
+      - "prior_big_low"
+      - "prior_big_mid"
+      - "prior_big_high"
+  ipca:
+    enabled: true
+    n_factors: 8
+    inputs:
+      returns:
+        dataset: "asset_returns"
+        column: "fwd_return"
+        return_type: "simple"
+        realization_lag: ${analytics.return_realization_lag}
+        excess: true
+      characteristics:
+        dataset: "firm_characteristics"
+    min_characteristic_coverage: 0.8
+    max_age:
+      default: 126
+      columns:
+        interest_coverage: 378
+        capex_intensity: 378
+        dividend_payout: 378
+        accruals: 378
+  timing:
+    instruments:
+      dataset: "macro"
+      columns: ["nfci", "baa10y_spread", "tips_10y_yield", "move", "vix"]
+    instrument_lag: 1
+    market_squared: true
+    conditional_alpha: true
+  rolling_beta_window: 126

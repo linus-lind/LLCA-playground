@@ -1,5 +1,7 @@
 """Training policy for estimators fitted by scikit-learn-compatible engines."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 
 from llca.pipeline.contracts import TrainingEngine

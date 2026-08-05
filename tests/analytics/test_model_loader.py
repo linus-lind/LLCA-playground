@@ -5,8 +5,8 @@ from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from llca.analytics.utils.config import RegisteredModelConfig
-from llca.analytics.utils.model_loader import get_registered_model_metadata
+from llca.analytics.inputs.registry import get_registered_model_metadata
+from llca.analytics.modules.analytics_config import RegisteredModelConfig
 from llca.core.artifacts import DATA_MANIFEST_ARTIFACT, TRAINING_MANIFEST_ARTIFACT
 
 
@@ -47,7 +47,7 @@ class RegisteredModelMetadataTest(unittest.TestCase):
             )
 
             config = RegisteredModelConfig(name="model", version=1, label="model-v1")
-            with patch("llca.analytics.utils.model_loader.MlflowClient", return_value=client):
+            with patch("llca.analytics.inputs.registry.MlflowClient", return_value=client):
                 metadata = get_registered_model_metadata(config, "sqlite:///test.db")
 
         self.assertEqual(metadata.run_id, "run-1")

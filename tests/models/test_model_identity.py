@@ -15,7 +15,15 @@ class ModelIdentityTest(unittest.TestCase):
         self.assertTrue(model_registry.is_registered("fmg-ctct-2"))
         self.assertEqual(
             model_registry.available(),
-            ["fmg-clstm", "fmg-ctct-1", "fmg-ctct-2", "fmg-ctt"],
+            [
+                "equal-weight",
+                "fmg-clstm",
+                "fmg-ctct-1",
+                "fmg-ctct-2",
+                "fmg-ctt",
+                "random-long-short",
+                "rf",
+            ],
         )
 
 

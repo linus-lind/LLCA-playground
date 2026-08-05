@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import math
 from typing import Literal
 
@@ -85,15 +87,6 @@ def _drifted_turnover(weights: Tensor, returns: Tensor) -> Tensor:
     return torch.cat([first, turnover])
 
 
-def _short_exposure(weights: Tensor) -> Tensor:
-    return weights.clamp_max(0.0).abs().sum(dim=-1)
-
-
-def _concentration(weights: Tensor) -> Tensor:
-    """Per-date Herfindahl index (sum of squared weights); higher = more concentrated."""
-    return weights.pow(2).sum(dim=-1)
-
-
 def _common_score_penalty(scores: Tensor, valid_mask: Tensor) -> Tensor:
     """Penalize a shared directional offset without removing relative asset signals."""
     masked_scores = torch.where(valid_mask, scores, scores.new_zeros(()))
@@ -129,11 +122,11 @@ class PortfolioLoss(nn.Module):
         bid_ask_spread: float,
         slippage: float,
         borrow_cost: float,
-        normalization: PortfolioNormalization = "market_neutral",
-        return_type: ReturnType = "simple",
-        common_score_aversion: float = 0.0,
-        net_exposure_aversion: float = 0.0,
-        net_exposure_tolerance: float = 0.0,
+        normalization: PortfolioNormalization,
+        return_type: ReturnType,
+        common_score_aversion: float,
+        net_exposure_aversion: float,
+        net_exposure_tolerance: float,
     ) -> None:
         super().__init__()
         parameters = {
@@ -185,43 +178,43 @@ class PortfolioLoss(nn.Module):
         return _scores_to_weights(scores, self.leverage, valid_mask, self.normalization)
 
     def forward(
-        self, weights: Tensor, returns: Tensor, valid_mask: Tensor | None = None
+        self, scores: Tensor, returns: Tensor, valid_mask: Tensor | None = None
     ) -> PortfolioLossOutput:
         """Evaluate scalar utility and its components over one block of dates.
 
-        Despite the historical ``weights`` argument name, the first tensor contains raw
-        signed scores and is normalized internally. Raw outcomes follow ``return_type``
-        and are converted to simple returns before position drift and accounting.
+        The first tensor contains raw signed scores and is normalized internally.
+        Raw outcomes follow ``return_type`` and are converted to simple returns
+        before position drift and accounting.
         """
-        if weights.dim() != 2 or returns.shape != weights.shape:
+        if scores.dim() != 2 or returns.shape != scores.shape:
             raise ValueError(
-                f"expected scores and returns of shape [B, N], got {tuple(weights.shape)} and {tuple(returns.shape)}"
+                f"expected scores and returns of shape [B, N], got {tuple(scores.shape)} and {tuple(returns.shape)}"
             )
-        if weights.numel() == 0:
+        if scores.numel() == 0:
             raise ValueError("portfolio objective requires at least one date and entity")
         if valid_mask is None:
-            valid_mask = torch.ones_like(weights, dtype=torch.bool)
-        if valid_mask.shape != weights.shape or valid_mask.dtype != torch.bool:
+            valid_mask = torch.ones_like(scores, dtype=torch.bool)
+        if valid_mask.shape != scores.shape or valid_mask.dtype != torch.bool:
             raise ValueError("valid_mask must be boolean and have the same shape as scores")
-        if valid_mask.device != weights.device or returns.device != weights.device:
+        if valid_mask.device != scores.device or returns.device != scores.device:
             raise ValueError("scores, returns, and valid_mask must be on the same device")
         if not bool(valid_mask.any(dim=-1).all().item()):
             raise ValueError("every portfolio date must contain at least one valid entity")
-        if bool((~torch.isfinite(weights) & valid_mask).any().item()):
+        if bool((~torch.isfinite(scores) & valid_mask).any().item()):
             raise ValueError("portfolio scores must be finite at valid positions")
 
-        common_score_penalty = _common_score_penalty(weights, valid_mask)
+        common_score_penalty = _common_score_penalty(scores, valid_mask)
         returns = torch.where(valid_mask, returns, returns.new_zeros(()))
         returns = _to_simple_returns(returns, self.return_type)
-        weights = self.normalize_weights(weights, valid_mask)
+        weights = self.normalize_weights(scores, valid_mask)
 
         realised = _portfolio_returns(weights, returns)
         turnover = _drifted_turnover(weights, returns)
         gross = weights.abs().sum(dim=-1)
         net = weights.sum(dim=-1)
         long = weights.clamp_min(0.0).sum(dim=-1)
-        short = _short_exposure(weights)
-        concentration = _concentration(weights)
+        short = weights.clamp_max(0.0).abs().sum(dim=-1)
+        concentration = weights.pow(2).sum(dim=-1)
 
         turnover_rate = self.execution_fee + self.bid_ask_spread + self.slippage
         cost = turnover_rate * turnover + self.borrow_cost * short

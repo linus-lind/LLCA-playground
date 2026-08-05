@@ -1,5 +1,7 @@
 """Runtime policy for discovering and resuming interrupted training runs."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 from typing import Literal
 

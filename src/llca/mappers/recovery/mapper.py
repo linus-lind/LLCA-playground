@@ -1,5 +1,7 @@
 """Map Hydra recovery policy into a typed runtime configuration."""
 
+from __future__ import annotations
+
 from typing import cast
 
 from omegaconf import DictConfig

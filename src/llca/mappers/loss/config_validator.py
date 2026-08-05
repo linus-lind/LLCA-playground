@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from omegaconf import DictConfig, ListConfig
 
 from llca.mappers.config_validation import register_validator

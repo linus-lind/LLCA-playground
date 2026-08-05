@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import pandas as pd
 
 from llca.preprocessing.modules.subgroup import subgroup_key

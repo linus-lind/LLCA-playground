@@ -147,7 +147,9 @@ class FmgClstmEstimatorTest(unittest.TestCase):
 
 class FmgClstmConfigurationTest(unittest.TestCase):
     def test_hydra_configuration_is_registered_and_valid(self) -> None:
-        config_dir = str((Path(__file__).resolve().parents[2] / "hydra" / "configs").resolve())
+        config_dir = str(
+            (Path(__file__).resolve().parents[2] / "hydra" / "configs" / "training").resolve()
+        )
         with initialize_config_dir(config_dir=config_dir, version_base=None):
             cfg = compose(
                 config_name="train",
@@ -165,7 +167,9 @@ class FmgClstmConfigurationTest(unittest.TestCase):
         self.assertEqual(cfg.model.lstm.output_dropout, 0.1)
 
     def test_rejects_invalid_recurrent_and_dimensional_configuration(self) -> None:
-        config_dir = str((Path(__file__).resolve().parents[2] / "hydra" / "configs").resolve())
+        config_dir = str(
+            (Path(__file__).resolve().parents[2] / "hydra" / "configs" / "training").resolve()
+        )
         with initialize_config_dir(config_dir=config_dir, version_base=None):
             cfg = compose(
                 config_name="train",

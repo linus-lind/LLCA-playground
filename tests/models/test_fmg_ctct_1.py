@@ -42,6 +42,9 @@ def _objective() -> PortfolioLoss:
         bid_ask_spread=0.0,
         slippage=0.0,
         borrow_cost=0.0,
+        common_score_aversion=0.0,
+        net_exposure_aversion=0.0,
+        net_exposure_tolerance=0.0,
     )
 
 
@@ -200,7 +203,9 @@ class FmgCtct1EstimatorTest(unittest.TestCase):
 
 class FmgCtct1ConfigurationTest(unittest.TestCase):
     def test_hydra_configuration_is_registered_and_valid(self) -> None:
-        config_dir = str((Path(__file__).resolve().parents[2] / "hydra" / "configs").resolve())
+        config_dir = str(
+            (Path(__file__).resolve().parents[2] / "hydra" / "configs" / "training").resolve()
+        )
         with initialize_config_dir(config_dir=config_dir, version_base=None):
             cfg = compose(
                 config_name="train",
@@ -217,7 +222,9 @@ class FmgCtct1ConfigurationTest(unittest.TestCase):
         self.assertEqual(cfg.model.score_activation, "tanh")
 
     def test_missing_target_and_incompatible_normalization_are_rejected(self) -> None:
-        config_dir = str((Path(__file__).resolve().parents[2] / "hydra" / "configs").resolve())
+        config_dir = str(
+            (Path(__file__).resolve().parents[2] / "hydra" / "configs" / "training").resolve()
+        )
         with initialize_config_dir(config_dir=config_dir, version_base=None):
             cfg = compose(
                 config_name="train",

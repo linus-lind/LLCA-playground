@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 from torch import nn
 
-from llca.training.modules.training_diagnostics import BatchMetadata, ObjectiveResult
+from llca.models.estimators.objective_output import BatchMetadata, ObjectiveResult
 
 
 @dataclass(frozen=True, slots=True)

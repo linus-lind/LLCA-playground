@@ -12,6 +12,8 @@ from llca.mappers import validate_config
 from llca.mappers.analytics.config_validator import validate_analytics_config
 
 CONFIG_ROOT = Path(__file__).resolve().parents[1] / "hydra" / "configs"
+TRAINING_ROOT = CONFIG_ROOT / "training"
+ANALYTICS_ROOT = CONFIG_ROOT / "analytics"
 TRAINING_CONFIGS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("fmg-ctct-2", ("experiment=fmg-ctct-2",)),
     (
@@ -27,18 +29,18 @@ TRAINING_CONFIGS: tuple[tuple[str, tuple[str, ...]], ...] = (
 )
 
 
-def _compose(config_name: str, overrides: tuple[str, ...] = ()) -> DictConfig:
+def _compose(root: Path, config_name: str, overrides: tuple[str, ...] = ()) -> DictConfig:
     GlobalHydra.instance().clear()
-    with initialize_config_dir(version_base=None, config_dir=str(CONFIG_ROOT.resolve())):
+    with initialize_config_dir(version_base=None, config_dir=str(root.resolve())):
         return compose(config_name=config_name, overrides=list(overrides))
 
 
 def main() -> None:
     for label, overrides in TRAINING_CONFIGS:
-        config = _compose("train", overrides)
+        config = _compose(TRAINING_ROOT, "train", overrides)
         validate_config(config)
         print(f"validated train experiment={label}")
-    analytics = _compose("analytics")
+    analytics = _compose(ANALYTICS_ROOT, "analytics")
     validate_analytics_config(analytics)
     print("validated analytics")
 

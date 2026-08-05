@@ -23,6 +23,10 @@ dependencies = [
     "dvc>=3.50.0",
     "hydra-core>=1.3.0",
     "exchange-calendars>=4.0",
+    "statsmodels>=0.14.0",
+    "linearmodels>=6.0",
+    "arch>=7.0",
+    "ipca>=0.6.0",
 ]
 
 [project.optional-dependencies]
@@ -61,4 +65,8 @@ follow_imports = "skip"
 
 [[tool.mypy.overrides]]
 module = ["exchange_calendars.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["ipca.*", "linearmodels.*", "arch.*", "statsmodels.*"]
 ignore_missing_imports = true

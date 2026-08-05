@@ -1,5 +1,7 @@
 """Registry binding for the full cross-sectional FMG-CTCT-2 model."""
 
+from __future__ import annotations
+
 from functools import partial
 
 from omegaconf import DictConfig

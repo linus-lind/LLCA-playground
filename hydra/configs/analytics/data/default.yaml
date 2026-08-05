@@ -1,0 +1,120 @@
+name: "sp500-crsp-compustat"
+selection:
+  entity_ids: null
+  csv_chunk_size: 250000
+cache:
+  enabled: true
+  directory: ".cache/llca/data"
+
+index:
+  time: "date"
+  entity: "instrument_id"
+datasets:
+  asset_returns:
+    path: "sp500_constituents/daily/daily_values.csv"
+    kind: "panel"
+    frequency: "daily"
+    date_format: "%d/%m/%Y"
+    index:
+      date: { raw: "DlyCalDt", dtype: "date" }
+      instrument_id: "PERMNO"
+    columns:
+      open: "DlyOpen"
+    auxiliary:
+      price_adjustment_factor: "DlyCumFacPr"
+      membership_start: { raw: "MbrStartDt", dtype: "date" }
+      membership_end: { raw: "MbrEndDt", dtype: "date" }
+  fama_french:
+    path: "fama-french/fama-french.csv"
+    kind: "panel"
+    frequency: "daily"
+    date_format: "%d/%m/%Y"
+    index:
+      date: { raw: "date", dtype: "date" }
+    columns:
+      mktrf: "mktrf"
+      smb: "smb"
+      hml: "hml"
+      rmw: "rmw"
+      cma: "cma"
+      rf: "rf"
+      umd: "umd"
+  benchmark_portfolios:
+    path: "fama-french/portfolios_2x3.csv"
+    kind: "panel"
+    frequency: "daily"
+    date_format: "%Y%m%d"
+    index:
+      date: { raw: "date", dtype: "date" }
+    columns:
+      bm_small_low: "SMALL LoBM"
+      bm_small_mid: "ME1 BM2"
+      bm_small_high: "SMALL HiBM"
+      bm_big_low: "BIG LoBM"
+      bm_big_mid: "ME2 BM2"
+      bm_big_high: "BIG HiBM"
+      op_small_low: "SMALL LoOP"
+      op_small_mid: "ME1 OP2"
+      op_small_high: "SMALL HiOP"
+      op_big_low: "BIG LoOP"
+      op_big_mid: "ME2 OP2"
+      op_big_high: "BIG HiOP"
+      inv_small_low: "SMALL LoINV"
+      inv_small_mid: "ME1 INV2"
+      inv_small_high: "SMALL HiINV"
+      inv_big_low: "BIG LoINV"
+      inv_big_mid: "ME2 INV2"
+      inv_big_high: "BIG HiINV"
+      prior_small_low: "SMALL LoPRIOR"
+      prior_small_mid: "ME1 PRIOR2"
+      prior_small_high: "SMALL HiPRIOR"
+      prior_big_low: "BIG LoPRIOR"
+      prior_big_mid: "ME2 PRIOR2"
+      prior_big_high: "BIG HiPRIOR"
+  firm_characteristics:
+    path: "sp500_constituents/fundamentals/fundamentals.csv"
+    kind: "panel"
+    frequency: "point_in_time"
+    index:
+      date: { raw: "date", dtype: "date" }
+      instrument_id: "permno"
+    columns:
+      current_assets_quarterly: "actq"
+      total_assets_quarterly: "atq"
+      common_equity_quarterly: "ceqq"
+      cash_short_term_investments_quarterly: "cheq"
+      cost_of_goods_sold_quarterly: "cogsq"
+      common_shares_outstanding_quarterly: "cshoq"
+      long_term_debt_quarterly: "dlttq"
+      inventories_quarterly: "invtq"
+      current_liabilities_quarterly: "lctq"
+      total_liabilities_quarterly: "ltq"
+      net_income_quarterly: "niq"
+      operating_income_after_depreciation_quarterly: "oiadpq"
+      total_receivables_quarterly: "rectq"
+      net_sales_quarterly: "saleq"
+      deferred_taxes_investment_tax_credit_quarterly: "txditcq"
+      research_development_expense_quarterly: "xrdq"
+      selling_general_admin_expense_quarterly: "xsgaq"
+      market_value_total_quarter_end: "mkvaltq"
+      total_assets_annual: "at"
+      capital_expenditures_annual: "capx"
+      common_dividends_annual: "dvc"
+      income_before_extraordinary_items_annual: "ib"
+      net_income_annual: "ni"
+      operating_cash_flow_annual: "oancf"
+      operating_income_after_depreciation_annual: "oiadp"
+      interest_expense_total_annual: "xint"
+  macro:
+    path: "macro/macro.csv"
+    kind: "panel"
+    frequency: "daily"
+    date_format: "%d.%m.%Y"
+    index:
+      date: { raw: "date", dtype: "date" }
+    columns:
+      nfci: "nfci"
+      tips_10y_yield: "tips_10y_yield"
+      baa10y_spread: "baa10y_spread"
+      move: "move"
+      vix: "vix"

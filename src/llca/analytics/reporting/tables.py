@@ -1,20 +1,145 @@
+"""Build the paper-facing publication tables (content only) from one comparison.
+
+Every function here produces :class:`PublicationTable` data — humanized labels, metric-per-row
+frames, and item-aligned detail tables. Turning those tables into styled figures and exporting
+the report lives in :mod:`llca.analytics.reporting.table_rendering`.
+"""
+
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Literal
+from datetime import datetime
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
 from llca.analytics.comparison import ComparisonEvaluation
+from llca.analytics.modules.analytics_config import ModelEvaluationConfig
 from llca.analytics.modules.test_evaluation import TestEvaluation
-from llca.analytics.utils.config import ModelEvaluationConfig, TableFormat
+from llca.analytics.reporting.table_types import NumberFormat, PublicationTable
 
-type NumberFormat = Literal["decimal", "percent", "integer"]
+# Tokens that must keep a fixed capitalization when snake_case labels are humanized.
+_LABEL_ACRONYMS = {
+    "hhi": "HHI",
+    "ic": "IC",
+    "icir": "ICIR",
+    "ir": "IR",
+    "var": "VaR",
+    "es": "ES",
+    "roc": "ROC",
+    "auc": "AUC",
+    "l1": "L1",
+    "cagr": "CAGR",
+    "pnl": "PnL",
+}
+
+
+def _humanize_text(text: str) -> str:
+    """Turn a ``snake_case`` token into readable words, respecting known acronyms.
+
+    Splits on underscores/hyphens, capitalizes the first word, and substitutes fixed casings for
+    recognised acronyms. Text that already reads as prose — containing spaces or interior
+    capitals — is returned untouched so curated labels are preserved.
+    """
+    stripped = text.strip()
+    if not stripped or " " in stripped or stripped != stripped.lower():
+        return stripped
+    tokens = [token for token in re.split(r"[_\-]+", stripped) if token]
+    if not tokens:
+        return stripped
+    rendered = [
+        _LABEL_ACRONYMS.get(token, token.capitalize() if index == 0 else token)
+        for index, token in enumerate(tokens)
+    ]
+    return " ".join(rendered)
+
+
+def _humanize_index_value(value: object) -> object:
+    """Render a row-index value for display, formatting dates and numbers cleanly.
+
+    A year-end timestamp becomes its year and other timestamps their ISO date; integer-valued
+    numbers lose their decimals; strings are humanized; anything else is returned as-is.
+    """
+    if isinstance(value, pd.Timestamp | datetime):
+        if value.month == 12 and value.day == 31:
+            return str(value.year)
+        return value.date().isoformat()
+    if isinstance(value, bool):
+        return str(value)
+    if isinstance(value, int | np.integer):
+        return str(int(value))
+    if isinstance(value, float) and float(value).is_integer():
+        return str(int(value))
+    if isinstance(value, str):
+        return _humanize_text(value)
+    return value
+
+
+def _prettify_detail_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    """Humanize a detail frame's statistic headers and row labels, leaving model labels intact.
+
+    On a two-level column index only the ``Statistic`` level is prettified; the ``Model`` level
+    holds user-facing identifiers and is preserved. Single-level column headers and the row index
+    are humanized as well.
+    """
+    frame = frame.copy()
+    if isinstance(frame.columns, pd.MultiIndex):
+        names = list(frame.columns.names)
+        frame.columns = pd.MultiIndex.from_tuples(
+            [
+                tuple(
+                    _humanize_text(str(value)) if name == "Statistic" else value
+                    for name, value in zip(names, column, strict=True)
+                )
+                for column in frame.columns
+            ],
+            names=names,
+        )
+    else:
+        frame.columns = pd.Index(
+            [_humanize_text(str(column)) for column in frame.columns],
+            name=frame.columns.name,
+        )
+    index_name = _humanize_text(str(frame.index.name)) if frame.index.name else None
+    frame.index = pd.Index(
+        [_humanize_index_value(value) for value in frame.index],
+        name=index_name,
+    )
+    return frame
+
+
+def _statistic_label(column: object, names: Sequence[object]) -> str:
+    """Pull the statistic name out of a column key, grouped or flat.
+
+    For a tuple key it returns the entry under the ``Statistic`` level (falling back to the last
+    element); a plain key is returned as a string.
+    """
+    if isinstance(column, tuple):
+        for name, value in zip(names, column, strict=True):
+            if name == "Statistic":
+                return str(value)
+        return str(column[-1])
+    return str(column)
+
+
+def _stat_major(frame: pd.DataFrame, comparison: ComparisonEvaluation) -> pd.DataFrame:
+    """Pivot a ``(Model, Statistic)`` column index to statistic-major ``(Statistic, Model)``.
+
+    Statistics become the spanning top-level header and models the sub-columns, keeping the
+    original statistic order and the configured model order. When only one model was evaluated,
+    the redundant model level is dropped, leaving just the statistic header.
+    """
+    swapped = frame.swaplevel(0, 1, axis=1)
+    stat_order = list(dict.fromkeys(frame.columns.get_level_values("Statistic")))
+    present = set(swapped.columns.get_level_values("Model"))
+    model_order = [result.label for result in comparison.results if result.label in present]
+    columns = pd.MultiIndex.from_product([stat_order, model_order], names=["Statistic", "Model"])
+    ordered = swapped.reindex(columns=columns)
+    if len(comparison.results) == 1:
+        return ordered.droplevel("Model", axis=1)
+    return ordered
 
 
 @dataclass(frozen=True, slots=True)
@@ -24,26 +149,6 @@ class MetricSpec:
     key: str
     label: str
     number_format: NumberFormat = "decimal"
-
-
-@dataclass(frozen=True, slots=True)
-class PublicationTable:
-    """Hold one numeric or textual table together with paper-facing metadata."""
-
-    name: str
-    title: str
-    caption: str
-    frame: pd.DataFrame
-    row_formats: tuple[NumberFormat, ...] = ()
-    column_formats: tuple[NumberFormat, ...] = ()
-
-
-@dataclass(frozen=True, slots=True)
-class PublicationReport:
-    """Describe the report directory and every generated table artifact."""
-
-    directory: Path
-    artifacts: dict[str, tuple[Path, ...]]
 
 
 _OBJECTIVE = (
@@ -60,24 +165,15 @@ _OBJECTIVE = (
 )
 
 _SIGNAL = (
-    MetricSpec("prediction_coverage", "Prediction coverage", "percent"),
     MetricSpec("pearson_correlation", "Pearson correlation"),
     MetricSpec("spearman_correlation", "Spearman correlation"),
-    MetricSpec("mean_daily_pearson_ic", "Mean daily Pearson IC"),
-    MetricSpec("mean_daily_rank_ic", "Mean daily rank IC"),
+    MetricSpec("mean_daily_pearson_ic", "Mean Pearson IC (recorded basis)"),
+    MetricSpec("mean_daily_rank_ic", "Mean rank IC (recorded basis)"),
     MetricSpec("rank_ic_ir", "Rank ICIR"),
-    MetricSpec("annualized_rank_ic_ir", "Annualized rank ICIR"),
+    MetricSpec("annualized_rank_ic_ir", "Annualized rank ICIR (cross-sectional only)"),
     MetricSpec("directional_accuracy", "Directional accuracy", "percent"),
     MetricSpec("magnitude_weighted_directional_accuracy", "Magnitude-weighted accuracy", "percent"),
-    MetricSpec("accuracy", "Accuracy", "percent"),
-    MetricSpec("balanced_accuracy", "Balanced accuracy", "percent"),
     MetricSpec("roc_auc", "ROC AUC"),
-    MetricSpec("average_precision", "Average precision"),
-    MetricSpec("brier_score", "Brier score"),
-    MetricSpec("matthews_correlation", "Matthews correlation"),
-    MetricSpec("mae", "Mean absolute error"),
-    MetricSpec("rmse", "Root mean squared error"),
-    MetricSpec("r_squared", "R-squared"),
     MetricSpec("top_minus_bottom_outcome", "Top-minus-bottom outcome", "percent"),
     MetricSpec("bucket_monotonicity", "Bucket monotonicity"),
 )
@@ -114,10 +210,6 @@ _PORTFOLIO_CONSTRUCTION = (
 )
 
 
-def _slug(value: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-") or "report"
-
-
 def _metric_table(
     source: pd.DataFrame,
     specs: tuple[MetricSpec, ...],
@@ -125,18 +217,53 @@ def _metric_table(
     name: str,
     title: str,
     caption: str,
+    significance: pd.DataFrame | None = None,
+    pvalue_for: tuple[tuple[str, str], ...] = (),
 ) -> PublicationTable | None:
+    """Build a table of the given metrics, one row per metric and one column per model.
+
+    Only metrics present with at least one non-missing value are kept. ``pvalue_for`` pairs a
+    displayed metric with a hidden p-value from ``significance``, whose stars are attached to the
+    metric's own cell. Returns ``None`` when no metric qualifies.
+    """
     available = [spec for spec in specs if spec.key in source and not source[spec.key].isna().all()]
     if not available:
         return None
-    frame = source[[spec.key for spec in available]].transpose()
-    frame.index = pd.Index([spec.label for spec in available], name="Metric")
+    p_value_keys = dict(pvalue_for)
+    models = list(source.index)
+    labels: list[str] = []
+    formats: list[NumberFormat] = []
+    data: dict[object, list[float]] = {model: [] for model in models}
+    p_values: dict[object, list[float]] = {model: [] for model in models}
+
+    def emit(label: str, series: pd.Series, number_format: NumberFormat) -> None:
+        labels.append(label)
+        formats.append(number_format)
+        for model in models:
+            data[model].append(float(series.get(model, np.nan)))
+
+    for spec in available:
+        emit(spec.label, source[spec.key], spec.number_format)
+        p_value_key = p_value_keys.get(spec.key)
+        for model in models:
+            value = (
+                significance[p_value_key].get(model, np.nan)
+                if significance is not None
+                and p_value_key is not None
+                and p_value_key in significance.columns
+                else np.nan
+            )
+            p_values[model].append(float(value))
+
+    frame = pd.DataFrame(data, index=pd.Index(labels, name="Metric"))[models]
+    significance_frame = pd.DataFrame(p_values, index=frame.index)[models]
     return PublicationTable(
         name=name,
         title=title,
         caption=caption,
         frame=frame,
-        row_formats=tuple(spec.number_format for spec in available),
+        row_formats=tuple(formats),
+        cell_p_values=significance_frame,
     )
 
 
@@ -167,126 +294,84 @@ def _overview(comparison: ComparisonEvaluation) -> PublicationTable:
 def _combined_detail(
     comparison: ComparisonEvaluation,
     selector: Callable[[TestEvaluation], pd.DataFrame | None],
-    *,
-    rows: int | None = None,
 ) -> pd.DataFrame | None:
-    """Align a task-specific table by item and place every model in grouped columns."""
+    """Stack one detail table per model into grouped ``(Model, Statistic)`` columns.
+
+    Applies ``selector`` to each model's evaluation, skips models that return nothing or an empty
+    frame, and concatenates the survivors side by side. Returns ``None`` if no model contributes.
+    """
     frames: dict[str, pd.DataFrame] = {}
     for result in comparison.results:
         frame = selector(result.evaluation)
         if frame is None or frame.empty:
             continue
-        frames[result.label] = frame.head(rows) if rows is not None else frame
+        frames[result.label] = frame
     if not frames:
         return None
     return pd.concat(frames, axis=1, names=["Model", "Statistic"])
 
 
+def _signal_bucket_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    """Replace a bucket table's low/high score bounds with a single formatted ``range`` column."""
+    frame = frame.copy()
+    frame.insert(
+        0,
+        "range",
+        [
+            f"[{low:.5f} - {high:.5f}]"
+            for low, high in zip(frame["score_low"], frame["score_high"], strict=True)
+        ],
+    )
+    return frame.drop(columns=["score_low", "score_high"])
+
+
 def _detailed_tables(comparison: ComparisonEvaluation) -> list[PublicationTable]:
-    """Build item-aligned detail tables with grouped columns for all models."""
+    """Build the per-item detail tables: yearly returns, side attribution, and signal buckets.
+
+    Each is assembled across models, pivoted to statistic-major grouped columns, humanized, and
+    given inferred column number formats. Tables with no data are omitted.
+    """
     candidates = (
-        (
-            "signal_buckets",
-            "Signal Bucket Analysis",
-            _combined_detail(comparison, lambda result: result.signal.buckets),
-            False,
-        ),
-        (
-            "confusion_matrix",
-            "Classification Confusion Matrix",
-            _combined_detail(comparison, lambda result: result.signal.confusion),
-            True,
-        ),
-        (
-            "signal_calibration",
-            "Signal Calibration",
-            _combined_detail(comparison, lambda result: result.signal.calibration),
-            False,
-        ),
-        (
-            "signal_decay",
-            "Signal Decay",
-            _combined_detail(comparison, lambda result: result.signal.decay),
-            False,
-        ),
         (
             "yearly_returns",
             "Calendar-Year Portfolio Returns",
             _combined_detail(
                 comparison,
-                lambda result: (
-                    result.portfolio.yearly_returns if result.portfolio is not None else None
-                ),
+                lambda result: result.portfolio.yearly_returns,
             ),
-            False,
         ),
         (
             "side_attribution",
-            "Long, Short, and Cost Attribution",
+            "Long, Short, Cash, and Cost Attribution",
             _combined_detail(
                 comparison,
-                lambda result: (
-                    result.portfolio.side_attribution if result.portfolio is not None else None
-                ),
+                lambda result: result.portfolio.side_attribution,
             ),
-            False,
         ),
         (
-            "signal_attribution",
-            "Portfolio Contribution by Signal Bucket",
+            "signal_bucket_analysis",
+            "Signal Bucket Analysis",
             _combined_detail(
                 comparison,
-                lambda result: (
-                    result.portfolio.signal_attribution if result.portfolio is not None else None
-                ),
+                lambda result: _signal_bucket_frame(result.portfolio.signal_attribution),
             ),
-            False,
-        ),
-        (
-            "asset_attribution",
-            "Largest Asset Return Contributions",
-            _combined_detail(
-                comparison,
-                lambda result: (
-                    result.portfolio.asset_attribution if result.portfolio is not None else None
-                ),
-                rows=10,
-            ),
-            False,
-        ),
-        (
-            "maximum_drawdown_attribution",
-            "Largest Maximum-Drawdown Contributions",
-            _combined_detail(
-                comparison,
-                lambda result: (
-                    result.portfolio.maximum_drawdown_attribution
-                    if result.portfolio is not None
-                    else None
-                ),
-                rows=10,
-            ),
-            False,
         ),
     )
     tables: list[PublicationTable] = []
-    for name, title, frame, integer_columns in candidates:
+    for name, title, frame in candidates:
         if frame is None or frame.empty:
             continue
-        column_formats: tuple[NumberFormat, ...]
-        if integer_columns:
-            column_formats = tuple("integer" for _ in frame.columns)
-        else:
-            column_formats = tuple(
-                _detailed_column_format(str(column[-1] if isinstance(column, tuple) else column))
-                for column in frame.columns
-            )
+        stat = _stat_major(frame, comparison)
+        column_formats = tuple(
+            _detailed_column_format(_statistic_label(column, stat.columns.names))
+            for column in stat.columns
+        )
         tables.append(
             PublicationTable(
                 name=name,
                 title=title,
                 caption=f"{title} on the common held-out sample.",
-                frame=frame.copy(),
+                frame=_prettify_detail_frame(stat),
                 column_formats=column_formats,
             )
         )
@@ -294,7 +379,11 @@ def _detailed_tables(comparison: ComparisonEvaluation) -> list[PublicationTable]
 
 
 def _detailed_column_format(column: str) -> NumberFormat:
-    """Infer readable formats for task-specific table columns."""
+    """Guess a number format for a detail column from its name.
+
+    Count-like names format as integers, return/weight/rate-like names as percentages, and
+    everything else as decimals.
+    """
     normalized = column.lower()
     if any(token in normalized for token in ("observation", "count", "periods")):
         return "integer"
@@ -306,7 +395,6 @@ def _detailed_column_format(column: str) -> NumberFormat:
             "weight",
             "rate",
             "accuracy",
-            "coverage",
             "cost",
         )
     ):
@@ -314,8 +402,19 @@ def _detailed_column_format(column: str) -> NumberFormat:
     return "decimal"
 
 
-def build_publication_tables(comparison: ComparisonEvaluation) -> tuple[PublicationTable, ...]:
-    """Build compact comparison and task-specific tables from one evaluation object."""
+def build_publication_tables(
+    comparison: ComparisonEvaluation,
+    config: ModelEvaluationConfig,
+    model_significance: pd.DataFrame,
+) -> tuple[PublicationTable, ...]:
+    """Build the report's headline tables for one comparison.
+
+    Produces the model overview, the objective/signal/portfolio metric tables, and the per-item
+    detail tables. Rank-IC, directional-accuracy, and Sharpe p-values from ``model_significance``
+    are rendered as stars on their estimates, leaving only estimate-less tests for the separate
+    significance table. Tables with no data are dropped.
+    """
+    significance = model_significance
     optional = (
         _metric_table(
             comparison.loss_metrics,
@@ -330,6 +429,11 @@ def build_publication_tables(comparison: ComparisonEvaluation) -> tuple[Publicat
             name="signal_metrics",
             title="Signal Performance",
             caption="Signal quality metrics computed on identical prediction items.",
+            significance=significance,
+            pvalue_for=(
+                ("mean_daily_rank_ic", "ic_p_value"),
+                ("directional_accuracy", "hit_rate_p_value"),
+            ),
         ),
         _metric_table(
             comparison.portfolio_metrics,
@@ -337,6 +441,8 @@ def build_publication_tables(comparison: ComparisonEvaluation) -> tuple[Publicat
             name="portfolio_performance",
             title="Portfolio Performance and Risk",
             caption="Net realized performance after configured transaction and borrow costs.",
+            significance=significance,
+            pvalue_for=(("net_sharpe_ratio", "sharpe_p_value"),),
         ),
         _metric_table(
             comparison.portfolio_metrics,
@@ -353,114 +459,3 @@ def build_publication_tables(comparison: ComparisonEvaluation) -> tuple[Publicat
             *_detailed_tables(comparison),
         ]
     )
-
-
-def _formatted_frame(table: PublicationTable) -> pd.DataFrame:
-    frame = table.frame.copy().astype(object)
-    for position in range(len(frame)):
-        for column_position, _column in enumerate(frame.columns):
-            number_format = (
-                table.column_formats[column_position]
-                if table.column_formats
-                else table.row_formats[position]
-            )
-            value = frame.iat[position, column_position]
-            if pd.isna(value):
-                rendered = "--"
-            elif not isinstance(value, int | float | np.integer | np.floating):
-                rendered = str(value)
-            elif number_format == "percent":
-                rendered = f"{float(value):.2%}"
-            elif number_format == "integer":
-                rendered = f"{int(value):,}"
-            else:
-                rendered = f"{float(value):.3f}"
-            frame.iat[position, column_position] = rendered
-    return frame
-
-
-def _render_figure(
-    table: PublicationTable,
-    path: Path,
-    *,
-    dpi: int,
-) -> None:
-    display = _formatted_frame(table)
-    width = max(7.2, 1.45 * (len(display.columns) + 1))
-    height = max(2.0, 0.36 * (len(display) + 3))
-    figure, axis = plt.subplots(figsize=(width, height))
-    axis.axis("off")
-    axis.set_title(table.title, fontsize=12, fontweight="bold", pad=14)
-    cell_text = [[str(value) for value in row] for row in display.to_numpy().tolist()]
-    artist = axis.table(
-        cellText=cell_text,
-        rowLabels=[str(value) for value in display.index],
-        colLabels=[str(value) for value in display.columns],
-        cellLoc="right",
-        rowLoc="left",
-        colLoc="center",
-        loc="center",
-    )
-    artist.auto_set_font_size(False)
-    artist.set_fontsize(8.5)
-    artist.scale(1.0, 1.35)
-    for (row, _column), cell in artist.get_celld().items():
-        cell.set_edgecolor("#D6DCE4")
-        cell.set_linewidth(0.5)
-        if row == 0:
-            cell.set_facecolor("#1F3A5F")
-            cell.set_text_props(color="white", fontweight="bold")
-        elif row % 2 == 0:
-            cell.set_facecolor("#F3F6F9")
-    figure.text(0.5, 0.02, table.caption, ha="center", fontsize=8, color="#4A4A4A")
-    figure.savefig(path, dpi=dpi, bbox_inches="tight", facecolor="white")
-    plt.close(figure)
-
-
-def _export_table(
-    table: PublicationTable,
-    directory: Path,
-    formats: tuple[TableFormat, ...],
-    dpi: int,
-) -> tuple[Path, ...]:
-    paths: list[Path] = []
-    formatted = _formatted_frame(table)
-    for output_format in formats:
-        path = directory / f"{table.name}.{output_format}"
-        if output_format == "csv":
-            table.frame.to_csv(path)
-        elif output_format == "tex":
-            path.write_text(
-                formatted.to_latex(
-                    caption=table.caption,
-                    label=f"tab:{_slug(table.name)}",
-                    escape=True,
-                    na_rep="--",
-                    column_format="l" + "r" * len(formatted.columns),
-                ),
-                encoding="utf-8",
-            )
-        else:
-            _render_figure(table, path, dpi=dpi)
-        paths.append(path)
-    return tuple(paths)
-
-
-def export_publication_report(
-    comparison: ComparisonEvaluation,
-    config: ModelEvaluationConfig,
-) -> PublicationReport:
-    """Export paper-ready tables without writing tabular output to the console."""
-    labels = "-vs-".join(_slug(result.label) for result in comparison.results)
-    directory = config.output_dir / (f"{comparison.start:%Y%m%d}-{comparison.end:%Y%m%d}_{labels}")
-    directory.mkdir(parents=True, exist_ok=True)
-    artifacts = {
-        table.name: _export_table(
-            table,
-            directory,
-            config.table_formats,
-            config.table_dpi,
-        )
-        for table in build_publication_tables(comparison)
-    }
-    return PublicationReport(directory=directory, artifacts=artifacts)

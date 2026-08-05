@@ -57,9 +57,9 @@ This keeps analytical evaluation independent of concrete architecture classes.
 
 ## Add configuration and tests
 
-Add a model group YAML under `hydra/configs/model/`. Put only architecture and data-role
-bindings there. Optimization runtime belongs in `training/`, objective parameters in
-`loss/`, and research compositions in `experiment/`.
+Add a model group YAML under `hydra/configs/training/model/`. Put only architecture and
+data-role bindings there. Optimization runtime belongs in `training/training/`, objective
+parameters in `training/loss/`, and research compositions in `training/experiment/`.
 
 At minimum test:
 

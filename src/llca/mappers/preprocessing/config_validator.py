@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import exchange_calendars as xcals
 from omegaconf import DictConfig, ListConfig
 

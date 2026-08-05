@@ -1,4 +1,4 @@
-"""Model evaluation and reporting over held-out temporal test sets."""
+"""Portfolio-model evaluation and reporting over held-out temporal test sets."""
 
 from llca.analytics.comparison import ComparisonEvaluation, ModelEvaluationResult
 from llca.analytics.evaluation import evaluate_predictions

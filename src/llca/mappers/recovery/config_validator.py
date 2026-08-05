@@ -1,5 +1,7 @@
 """Validation for training-run recovery selection."""
 
+from __future__ import annotations
+
 from omegaconf import DictConfig
 
 from llca.mappers.config_validation import ConfigField, check_fields, register_validator

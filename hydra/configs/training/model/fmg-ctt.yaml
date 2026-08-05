@@ -1,0 +1,25 @@
+name: "fmg-ctt"
+d_model: 32
+feature_embedding_dim: 16
+dropout: 0.1
+sequence_length: 252
+score_activation: "tanh"
+target:
+  entity_id: 53613
+diagnostics:
+  score_saturation_threshold: 0.95
+inputs:
+  features: "daily_values"
+  context:
+    - "firm_characteristics"
+    - "macro"
+cnn:
+  layers:
+    - { out_channels: 8, kernel_size: [2, 1], padding: [0, 0] }
+    - { out_channels: 8, kernel_size: [4, 1], padding: [0, 0] }
+    - { out_channels: 8, kernel_size: [5, 1], padding: [0, 0] }
+transformer:
+  n_heads: 4
+supervision:
+  dataset: "loss"
+  column: "fwd_return"

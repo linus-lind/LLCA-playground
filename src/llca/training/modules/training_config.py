@@ -11,7 +11,7 @@ import torch
 from torch import Tensor
 
 from llca.pipeline.contracts import TrainingEngine
-from llca.training.reproducibility import configure_determinism, seed_everything
+from llca.training.engine.reproducibility import configure_determinism, seed_everything
 
 
 class OptimizerConfig:

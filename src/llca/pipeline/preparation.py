@@ -14,6 +14,7 @@ from llca.data.modules.panels import Panels
 from llca.data.versioning import (
     archive_raw_sources,
     build_data_manifest,
+    sha256_file,
     validate_data_manifest,
 )
 from llca.mappers.data import build_datasets, data_source_path
@@ -44,6 +45,13 @@ class PreparedModelData:
 @dataclass(frozen=True, slots=True)
 class PreparedTrainingData(PreparedModelData):
     """Prepared model data extended with immutable training evidence."""
+
+    data_manifest: dict[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedAnalysisData(PreparedModelData):
+    """Model-independent analysis data plus read-only local input evidence."""
 
     data_manifest: dict[str, Any]
 
@@ -134,6 +142,49 @@ def prepare_model_data(
     )
 
 
+def prepare_analysis_data(
+    cfg: DictConfig,
+    requirements: DataRequirements,
+    *,
+    data_view: str = "aligned_panel",
+) -> PreparedAnalysisData:
+    """Prepare an analysis universe without relying on a model run or mutating DVC.
+
+    The current bytes of every planned raw source are hashed before preparation. Those
+    hashes both version the disposable preparation cache and form the source evidence
+    returned to the analytics manifest. Feature-panel fingerprints bind the evidence to
+    the exact configured preprocessing and feature creation result.
+    """
+    plan = build_data_plan(cfg.data, requirements)
+    logical_sources = {name: data_source_path(cfg.data.datasets[name]) for name in plan.datasets}
+    source_records = _current_source_records(logical_sources)
+    source_versions = {
+        name: str(source_records[_project_source_key(path)]["sha256"])
+        for name, path in logical_sources.items()
+    }
+    prepared = _prepare(
+        cfg,
+        plan,
+        logical_sources,
+        data_view=data_view,
+        source_versions=source_versions,
+    )
+    data_manifest = build_data_manifest(
+        logical_sources,
+        prepared.feature_panels,
+        archived_sources=source_records,
+        data_plan=_resolved_plan(plan),
+    )
+    return PreparedAnalysisData(
+        data=prepared.data,
+        processed_datasets=prepared.processed_datasets,
+        feature_panels=prepared.feature_panels,
+        plan=prepared.plan,
+        logical_sources=prepared.logical_sources,
+        data_manifest=data_manifest,
+    )
+
+
 def prepare_training_data(
     cfg: DictConfig, requirements: DataRequirements, data_view: str
 ) -> PreparedTrainingData:
@@ -178,6 +229,48 @@ def prepare_training_data(
         logical_sources=prepared.logical_sources,
         data_manifest=data_manifest,
     )
+
+
+def _project_source_key(path: Path) -> str:
+    """Return the canonical project-relative source key used by data manifests."""
+    resolved = path.resolve()
+    try:
+        return resolved.relative_to(PROJECT_ROOT.resolve()).as_posix()
+    except ValueError as exc:
+        raise ValueError(
+            f"analysis data source '{resolved}' must be inside project root "
+            f"'{PROJECT_ROOT.resolve()}'"
+        ) from exc
+
+
+def _current_source_records(
+    logical_sources: Mapping[str, Path],
+) -> dict[str, dict[str, Any]]:
+    """Fingerprint unique local inputs without DVC operations or filesystem writes."""
+    records: dict[str, dict[str, Any]] = {}
+    for path in logical_sources.values():
+        source_key = _project_source_key(path)
+        if source_key in records:
+            continue
+        if not path.is_file():
+            raise FileNotFoundError(f"analysis data source does not exist: {path}")
+        records[source_key] = {
+            "path": source_key,
+            "size_bytes": path.stat().st_size,
+            "sha256": sha256_file(path),
+        }
+    return records
+
+
+def _resolved_plan(plan: DataPlan) -> dict[str, Any]:
+    """Serialize the logical selection plan consistently across run types."""
+    return {
+        "primary_dataset": plan.primary_dataset,
+        "datasets": {
+            name: {"entity_ids": list(query.entity_ids) if query.entity_ids is not None else None}
+            for name, query in plan.datasets.items()
+        },
+    }
 
 
 def _manifest_source_versions(

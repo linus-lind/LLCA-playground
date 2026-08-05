@@ -13,6 +13,10 @@ from torch import Tensor, nn
 
 from llca.data.modules.masked_panel import MaskedPanel, MaskedPanels
 from llca.models.estimators.evaluation_spec import EvaluationSpec
+from llca.models.estimators.objective_output import (
+    PanelBatchMetadata,
+    TrainingBatchOutput,
+)
 from llca.models.estimators.prediction import (
     PredictionKind,
     prediction_kind_from_bundle,
@@ -25,10 +29,6 @@ from llca.models.utils.batching import Batch, Field, Window, build_batches
 from llca.models.utils.sequences import SequenceInput, WindowedTensor, build_sequences
 from llca.models.utils.standardizer import Standardizer
 from llca.training.modules.training_config import TrainingConfig
-from llca.training.modules.training_diagnostics import (
-    PanelBatchMetadata,
-    TrainingBatchOutput,
-)
 from llca.training.modules.training_task import TrainingTask
 
 _BUNDLE_FORMAT_VERSION = 1

@@ -9,15 +9,15 @@ import torch
 from omegaconf import OmegaConf
 
 from llca.core.artifacts import DATA_MANIFEST_ARTIFACT, TRAINING_MANIFEST_ARTIFACT
+from llca.core.provenance.source import SOURCE_FINGERPRINT_TAG
 from llca.data.versioning import DATA_MANIFEST_FINGERPRINT_TAG, data_manifest_fingerprint
 from llca.mappers.recovery.config_validator import _validate_recovery
 from llca.mappers.recovery.mapper import build_recovery
-from llca.training.checkpointer import (
+from llca.training.engine.checkpointer import (
     Checkpointer,
     CheckpointValidationError,
     validate_training_checkpoint,
 )
-from llca.training.manifests.source import SOURCE_FINGERPRINT_TAG
 from llca.training.modules.recovery_config import RecoveryConfig
 from llca.training.recovery import (
     PIPELINE_FINGERPRINT_TAG,

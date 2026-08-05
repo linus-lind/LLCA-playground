@@ -10,9 +10,9 @@ from mlflow import MlflowClient
 from omegaconf import OmegaConf
 
 from llca.core.artifacts import ENVIRONMENT_MANIFEST_ARTIFACT
+from llca.core.provenance.source import SOURCE_FINGERPRINT_TAG
 from llca.splitting.fold import Fold
-from llca.training.execution import execute_training
-from llca.training.manifests.source import SOURCE_FINGERPRINT_TAG
+from llca.training.engine.execution import execute_training
 from llca.training.modules.recovery_config import RecoveryConfig
 from llca.training.modules.training_config import (
     AdamWConfig,
@@ -115,7 +115,7 @@ class TrainingExecutionRecoveryTest(unittest.TestCase):
                 raise RuntimeError("simulated process interruption")
 
             interrupted.fit.side_effect = fail_after_checkpoint
-            with patch("llca.training.execution.CHECKPOINTS_DIR", checkpoints):
+            with patch("llca.training.engine.execution.CHECKPOINTS_DIR", checkpoints):
                 with self.assertRaisesRegex(RuntimeError, "simulated"):
                     execute_training(
                         {},
@@ -145,7 +145,7 @@ class TrainingExecutionRecoveryTest(unittest.TestCase):
 
             recovered = MagicMock()
             recovered.log_model.return_value = "models:/recovered"
-            with patch("llca.training.execution.CHECKPOINTS_DIR", checkpoints):
+            with patch("llca.training.engine.execution.CHECKPOINTS_DIR", checkpoints):
                 execute_training(
                     {},
                     splitter,

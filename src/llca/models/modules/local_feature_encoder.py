@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from torch import Tensor, nn
 
 from llca.models.modules.continuous_variable_encoder import ContinuousVariableEncoder

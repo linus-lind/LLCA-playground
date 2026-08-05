@@ -16,6 +16,11 @@ class Pyfunc[EstimatorT: Estimator[Any]](mlflow.pyfunc.PythonModel):  # type: ig
     after which ``predict`` delegates to the typed pipeline output contract.
     """
 
+    # Estimators consume LLCA's compound data contracts (for example MaskedPanels), not
+    # MLflow's row-oriented ``list[...]`` schema.  Asking MLflow to infer and enforce a
+    # schema from ``Any`` both emits a warning and would misrepresent that contract.
+    _skip_type_hint_validation = True
+
     def __init__(self, estimator_cls: type[EstimatorT], bundle_artifact: str) -> None:
         super().__init__()
         self._estimator_cls = estimator_cls

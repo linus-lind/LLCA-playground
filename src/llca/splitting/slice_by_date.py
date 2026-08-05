@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import pandas as pd
 
 from llca.data.index_spec import time_level

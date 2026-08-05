@@ -1,5 +1,7 @@
 """Registry binding for the target-only transformer FMG-CTT model."""
 
+from __future__ import annotations
+
 from functools import partial
 
 from omegaconf import DictConfig

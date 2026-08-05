@@ -5,13 +5,13 @@ from tempfile import TemporaryDirectory
 
 from omegaconf import OmegaConf
 
-from llca.training.manifests import (
-    build_environment_manifest,
-    build_invocation_manifest,
-    build_source_snapshot,
+from llca.core.provenance.environment import build_environment_manifest
+from llca.core.provenance.source import build_source_snapshot
+from llca.core.provenance.training_manifest import (
     build_training_manifest,
     validate_training_manifest,
 )
+from llca.training.manifests import build_invocation_manifest
 
 
 class TrainingManifestTest(unittest.TestCase):
