@@ -1,5 +1,5 @@
 asset_returns:
-  - { name: "simple_change", column: "open", horizon: 1, shift: "${neg:${analytics.return_realization_lag}}", as: "fwd_return" }
+  - { name: "simple_change", column: "close", horizon: 1, shift: "${neg:${analytics.return_realization_lag}}", as: "fwd_return" }
 
 fama_french:
   - { name: "passthrough", column: "mktrf", shift: "${neg:${analytics.return_realization_lag}}", as: "mktrf" }
@@ -63,10 +63,6 @@ firm_characteristics:
   - { name: "ratio", numerator: "common_dividends_annual", denominator: "net_income_annual", as: "dividend_payout" }
   - { name: "net_ratio", add: ["income_before_extraordinary_items_annual"], subtract: ["operating_cash_flow_annual"], denominator: "total_assets_annual", as: "accruals" }
   - { name: "log_change", column: "common_shares_outstanding_quarterly", horizon: 4, skip_missing: true, as: "net_share_issuance" }
-  - { name: "passthrough", column: "market_value_total_quarter_end", as: "size" }
-  - { name: "ratio", numerator: "net_income_quarterly", denominator: "market_value_total_quarter_end", as: "earnings_yield" }
-  - { name: "net_ratio", add: ["common_equity_quarterly", "deferred_taxes_investment_tax_credit_quarterly"], denominator: "market_value_total_quarter_end", as: "book_to_market" }
-  - { name: "ratio", numerator: "net_sales_quarterly", denominator: "market_value_total_quarter_end", as: "sales_to_price" }
   - { name: "log_change", column: "net_sales_quarterly", horizon: 4, skip_missing: true, as: "revenue_growth" }
   - { name: "log_change", column: "total_assets_quarterly", horizon: 4, skip_missing: true, as: "asset_growth" }
   - { name: "log_change", column: "common_equity_quarterly", horizon: 4, skip_missing: true, as: "equity_growth" }

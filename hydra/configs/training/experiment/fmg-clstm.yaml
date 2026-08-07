@@ -1,6 +1,7 @@
 # @package _global_
 defaults:
   - override /model: "fmg-clstm"
-  - override /loss: "portfolio-single-asset"
+  - override /loss: "portfolio"
+  - override /training: "torch"
 
 experiment_name: "fmg-clstm"

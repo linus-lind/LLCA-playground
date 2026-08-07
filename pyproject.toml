@@ -70,3 +70,7 @@ ignore_missing_imports = true
 [[tool.mypy.overrides]]
 module = ["ipca.*", "linearmodels.*", "arch.*", "statsmodels.*"]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["scipy.*"]
+ignore_missing_imports = true

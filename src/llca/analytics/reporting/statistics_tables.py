@@ -94,7 +94,7 @@ def _significance_table(model_significance: pd.DataFrame) -> PublicationTable | 
             "HAC-corrected rows are labelled and one-sided where a direction is implied. "
             "Information-coefficient, directional-accuracy, and Sharpe significance appears "
             "inline on their metric tables. Paired p-values are represented inline: "
-            "*** p<0.01, ** p<0.05, * p<0.10."
+            "*** p<0.01, ** p<0.05, * p<0.10, (ns) not significant; a blank cell was not tested."
         ),
         frame=frame,
         row_formats=tuple(number_format for _, _, number_format, _ in rows),

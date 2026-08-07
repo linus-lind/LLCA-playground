@@ -5,10 +5,10 @@ from pathlib import Path
 import hydra
 from dotenv import load_dotenv
 from hydra.core.hydra_config import HydraConfig
-from hydra.types import RunMode
 from omegaconf import DictConfig
 
 from llca.core.paths import PROJECT_ROOT, chdir_to_project_root
+from llca.core.portfolio_accounting import FUNDING_CONVENTION
 from llca.core.provenance.environment import build_environment_manifest
 from llca.core.provenance.source import SOURCE_FINGERPRINT_TAG, build_source_snapshot
 from llca.core.provenance.training_manifest import build_training_manifest
@@ -88,10 +88,18 @@ def main(cfg: DictConfig) -> None:
     loss_cfg = _selected(cfg, "loss")
     objective = build_loss(loss_cfg) if loss_cfg is not None else None
 
-    estimator_factory = build_model(cfg.model, loss=objective, loss_config=loss_cfg)
+    estimator_factory = build_model(
+        cfg.model,
+        loss=objective,
+        loss_config=loss_cfg,
+        hyperparameter_selection=cfg.get("hyperparameter_selection"),
+    )
 
     training = build_training(cfg.training)
-    splitter = build_split(cfg.split)
+    # The split attaches the model's own required input history: an unfitted probe estimator
+    # reports it (from config, so it is valid before any network is built), keeping temporal
+    # and point-in-time models on identical end-anchored scored windows.
+    splitter = build_split(cfg.split, default_lookback=estimator_factory().required_lookback)
 
     data_manifest = prepared.data_manifest
     run_tags = provenance_tags(data_manifest)
@@ -103,6 +111,12 @@ def main(cfg: DictConfig) -> None:
     if loss_cfg is not None:
         run_tags["llca.objective"] = str(loss_cfg.name)
         run_tags["llca.objective_kind"] = str(objective_kind(str(loss_cfg.name)))
+        if str(loss_cfg.name) == "portfolio":
+            run_tags["llca.funding_convention"] = FUNDING_CONVENTION
+            risk_free = cfg.model.get("risk_free")
+            if isinstance(risk_free, DictConfig):
+                run_tags["llca.risk_free_dataset"] = str(risk_free.dataset)
+                run_tags["llca.risk_free_column"] = str(risk_free.column)
     source_manifest = build_source_snapshot()
     environment_manifest = build_environment_manifest()
 
@@ -129,8 +143,6 @@ def main(cfg: DictConfig) -> None:
         task_overrides=hydra_config.overrides.task,
         config_choices=hydra_config.runtime.choices,
     )
-    if hydra_config.mode == RunMode.MULTIRUN:
-        registry_model_name = f"{cfg.experiment_name}_{hydra_config.job.num}"
 
     if recovery is None:
         pipeline_config = build_training_manifest(cfg)

@@ -84,6 +84,52 @@ strategies operate on aligned panels. A native-event model can register a splitt
 own assembler output without changing training execution. Both strategies use the same
 parent/fold MLflow lifecycle and immutable fold boundaries.
 
+### Chronological splitting
+
+Both built-in splitters are **end-anchored**: the newest observation is always the final scored
+test date, and the scored layout `train | purge | validation | purge | test` is laid out backward
+from there. For `N` ordered dates and `block = train + 2·purge + val + test`, the single split's
+inclusive scored positions are `test_end = N-1`, `test_start = N-test`, `val_end = N-test-purge-1`,
+`val_start = N-test-purge-val`, `train_end = N-test-purge-val-purge-1`, `train_start = N-block`.
+The walk-forward splitter anchors its final fold the same way and steps earlier folds backward by
+`step_size`, yielding them oldest-first. **Excess observations are dropped from the beginning**, so
+adding history never changes which recent dates are scored, and every experiment reports on the
+most recent data.
+
+Two knobs are deliberately separated:
+
+- **`purge`** guards against the forward-looking *label* realizing across a boundary, so it equals
+  the supervision target's forward horizon (`1` for the current one-step return) — never the
+  sequence length or a feature window. Configuration validation rejects a purge below that horizon.
+- **`lookback`** is input history prepended to the train/validation slices (and, at evaluation,
+  the test slice) so a model can score its first observation. It defaults to the estimator's
+  `required_lookback` (`sequence_length + CNN buffer − 1` for temporal FMG models, `0` for
+  point-in-time baselines). Because the split is end-anchored, differing lookbacks leave the scored
+  dates identical, so a temporal model and a point-in-time baseline sharing the outer geometry are
+  compared on exactly the same test window.
+
+### Stock-feature standardization (FMG)
+
+`FmgEstimator.inputs.features` (price/volume-derived stock features, e.g. returns,
+volatility, momentum) is causally standardized by `EwmaStandardizer`
+(`models/utils/ewma_standardizer.py`) — an exponentially-weighted z-score fit and advanced
+independently per `(entity, feature)` pair, never pooled across entities or features. Its
+half-life is set by `model.standardization.half_life` (default 126 observations) and is a
+configured modeling choice, not a tuned hyperparameter.
+
+`FmgEstimator.inputs.context` (firm characteristics, macro) receives no standardization —
+those values enter the model exactly as preprocessing/features produced them, so their
+absolute magnitude stays available to the network's context-conditioning pathway (e.g. size
+or leverage modulating how a GRN weighs other inputs) instead of being normalized away.
+
+The normalizer is fit once from the training split, then advances continuously and
+causally as training, validation, and (from restored state, potentially in a different
+process) test rows are windowed — splits are never refit independently, and a row is never
+normalized using its own value or any later one. Its full state (per-entity mean/variance,
+a bounded per-entity replay buffer, and the fitted half-life) is part of the FMG bundle
+(`_inference_payload`/`_restore`), so a reloaded estimator's `predict` continues the same
+recursion rather than restarting it.
+
 ## Objectives and metrics
 
 Each loss plugin registers an `ObjectiveKind`: portfolio, regression, binary

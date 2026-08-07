@@ -6,6 +6,11 @@ from typing import Literal
 import torch
 from torch import Tensor, nn
 
+from llca.core.portfolio_accounting import (
+    cash_return_contribution,
+    drifted_weights,
+    gross_return,
+)
 from llca.core.returns import ReturnType
 from llca.loss.modules.portfolio_loss_output import PortfolioLossOutput
 
@@ -62,25 +67,21 @@ def _to_simple_returns(returns: Tensor, return_type: ReturnType) -> Tensor:
     return simple
 
 
-def _portfolio_returns(weights: Tensor, returns: Tensor) -> Tensor:
-    return (weights * returns).sum(dim=-1)
+def _drifted_turnover(weights: Tensor, returns: Tensor, risk_free: Tensor) -> Tensor:
+    """Measure trades relative to positions drifted by the previous period's returns.
 
-
-def _drifted_turnover(weights: Tensor, returns: Tensor) -> Tensor:
-    """Measure trades relative to positions drifted by the previous simple return.
-
-    ``weights`` and ``returns`` are ``[D, N]``. For dates after the first, previous
-    holdings are advanced through asset and portfolio NAV growth before comparison with
-    current target weights. Because no pre-sample portfolio is known, the first entry is
-    filled with the within-block mean turnover and does not introduce an artificial trade.
+    ``weights`` and ``returns`` are ``[D, N]`` and ``risk_free`` is ``[D]``. For dates after
+    the first, previous holdings are advanced through their own asset growth and the whole
+    book's NAV growth -- including residual cash earning the risk-free rate -- before
+    comparison with current target weights (see
+    :func:`llca.core.portfolio_accounting.drifted_weights`). Because no pre-sample portfolio
+    is known, the first entry is filled with the within-block mean turnover and does not
+    introduce an artificial trade.
     """
     if weights.shape[0] < 2:
         return weights.new_zeros(weights.shape[0])
 
-    prev_weights = weights[:-1]
-    prev_returns = returns[:-1]
-    nav_growth = (1.0 + (prev_weights * prev_returns).sum(dim=-1, keepdim=True)).clamp_min(_EPS)
-    drifted = prev_weights * (1.0 + prev_returns) / nav_growth
+    drifted = drifted_weights(weights[:-1], returns[:-1], risk_free[:-1])
     turnover = (weights[1:] - drifted).abs().sum(dim=-1)
 
     first = turnover.mean().reshape(1)
@@ -108,9 +109,14 @@ class PortfolioLoss(nn.Module):
     Each date's valid scores are converted through a configured bounded, directional, or
     market-neutral allocation rule. Depending on that rule, ``leverage`` is either a
     maximum gross-exposure cap or a fixed gross-exposure target. Raw log or simple
-    outcomes are converted to simple returns before the objective rewards their mean and
-    penalizes variance, Herfindahl concentration, drift-adjusted turnover, and short
-    borrow costs.
+    outcomes are converted to simple returns; residual cash ``1 - Σ_i w_i`` earns the
+    per-date risk-free rate under the ``residual_cash_at_risk_free`` convention, so the
+    objective rewards the mean **cash-inclusive** portfolio return and penalizes its
+    variance, Herfindahl concentration, drift-adjusted turnover, and short borrow costs.
+    Cash funding and short borrow cost are distinct: a short still pays the borrow cost on
+    its exposure even though the resulting residual cash earns the risk-free rate. The
+    accounting is the shared primitive in :mod:`llca.core.portfolio_accounting`, so training
+    and analytics evaluation cannot diverge on the convention.
     """
 
     def __init__(
@@ -177,14 +183,44 @@ class PortfolioLoss(nn.Module):
         """Apply the configured cross-sectional allocation rule to raw model scores."""
         return _scores_to_weights(scores, self.leverage, valid_mask, self.normalization)
 
+    @staticmethod
+    def _resolve_risk_free(risk_free: Tensor | None, scores: Tensor) -> Tensor:
+        """Validate and return a per-date ``[D]`` risk-free vector, defaulting to zeros.
+
+        The rate is one value per date, must live on the same device as ``scores``, and must
+        be finite. It carries no gradient — cash accounting flows gradients only through the
+        weights via ``1 - Σ_i w_i`` — so a missing rate resolves to an explicit zero vector
+        rather than silently skipping cash funding.
+        """
+        if risk_free is None:
+            return scores.new_zeros(scores.shape[0])
+        if risk_free.shape != scores.shape[:1]:
+            raise ValueError(
+                f"risk_free must have one rate per date with shape {tuple(scores.shape[:1])}, "
+                f"got {tuple(risk_free.shape)}"
+            )
+        if risk_free.device != scores.device:
+            raise ValueError("risk_free must be on the same device as scores")
+        if not bool(torch.isfinite(risk_free).all().item()):
+            raise ValueError("portfolio risk-free returns must be finite")
+        return risk_free
+
     def forward(
-        self, scores: Tensor, returns: Tensor, valid_mask: Tensor | None = None
+        self,
+        scores: Tensor,
+        returns: Tensor,
+        valid_mask: Tensor | None = None,
+        risk_free: Tensor | None = None,
     ) -> PortfolioLossOutput:
         """Evaluate scalar utility and its components over one block of dates.
 
-        The first tensor contains raw signed scores and is normalized internally.
-        Raw outcomes follow ``return_type`` and are converted to simple returns
-        before position drift and accounting.
+        The first tensor contains raw signed scores and is normalized internally. Raw
+        outcomes follow ``return_type`` and are converted to simple returns before position
+        drift and accounting. ``risk_free`` is one simple risk-free return per date ``[D]``
+        covering the same holding period as ``returns``; residual cash ``1 - Σ_i w_i`` earns
+        it, so the objective optimizes the cash-inclusive gross portfolio return. When
+        ``risk_free`` is omitted it is treated as zero, recovering the pure risky return for
+        isolated use; production portfolio training always supplies it.
         """
         if scores.dim() != 2 or returns.shape != scores.shape:
             raise ValueError(
@@ -202,14 +238,16 @@ class PortfolioLoss(nn.Module):
             raise ValueError("every portfolio date must contain at least one valid entity")
         if bool((~torch.isfinite(scores) & valid_mask).any().item()):
             raise ValueError("portfolio scores must be finite at valid positions")
+        risk_free = self._resolve_risk_free(risk_free, scores)
 
         common_score_penalty = _common_score_penalty(scores, valid_mask)
         returns = torch.where(valid_mask, returns, returns.new_zeros(()))
         returns = _to_simple_returns(returns, self.return_type)
         weights = self.normalize_weights(scores, valid_mask)
 
-        realised = _portfolio_returns(weights, returns)
-        turnover = _drifted_turnover(weights, returns)
+        realised = gross_return(weights, returns, risk_free)
+        cash_return = cash_return_contribution(weights, risk_free).mean()
+        turnover = _drifted_turnover(weights, returns, risk_free)
         gross = weights.abs().sum(dim=-1)
         net = weights.sum(dim=-1)
         long = weights.clamp_min(0.0).sum(dim=-1)
@@ -242,6 +280,7 @@ class PortfolioLoss(nn.Module):
         return PortfolioLossOutput(
             loss=-utility,
             mean_return=mean_return,
+            cash_return=cash_return,
             variance=variance,
             turnover=turnover.mean(),
             cost=mean_cost,

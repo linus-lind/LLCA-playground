@@ -184,21 +184,36 @@ def _plot_signal_comparison(comparison: ComparisonEvaluation) -> list[tuple[str,
     return [("signal_comparison", figure)]
 
 
-def _plot_confusion_and_roc(comparison: ComparisonEvaluation) -> list[tuple[str, Figure]]:
-    """Draw one directional confusion matrix per model plus a shared ROC panel.
+def _plot_confusion_matrices(comparison: ComparisonEvaluation) -> list[tuple[str, Figure]]:
+    """Draw one annotated directional confusion matrix per model in a two-column grid.
 
-    Each model gets an annotated confusion heatmap; the final panel overlays every model's ROC
-    curve, labelled with its AUC, against the chance diagonal. Returned tagged ``confusion_roc``.
+    Panels are laid out at two per row so every model keeps an equally sized, readable heatmap;
+    a trailing odd cell is hidden. Returned tagged ``confusion_matrices``.
+    """
+    results = list(comparison.results)
+    ncols = 2
+    nrows = -(-len(results) // ncols)
+    figure, axes = plt.subplots(nrows, ncols, figsize=(4.6 * ncols, 4.4 * nrows), squeeze=False)
+    figure.suptitle("Directional Confusion Matrices")
+    panels = list(axes.flat)
+    for axis, result in zip(panels, results, strict=False):
+        draw_confusion(axis, result.evaluation.signal.confusion, title=result.label, compact=True)
+    for axis in panels[len(results) :]:
+        axis.set_visible(False)
+    figure.tight_layout(rect=(0, 0, 1, 0.97))
+    return [("confusion_matrices", figure)]
+
+
+def _plot_roc(comparison: ComparisonEvaluation) -> list[tuple[str, Figure]]:
+    """Overlay every model's directional ROC curve on its own standalone figure.
+
+    Each model that produced a curve is drawn against the chance diagonal and labelled with its
+    AUC. Returned tagged ``roc_curve``.
     """
     results = list(comparison.results)
     colors = _colors(comparison)
-    panels = len(results) + 1
-    figure, axes = plt.subplots(1, panels, figsize=(4.2 * panels, 4.4), squeeze=False)
-    row = axes[0]
-    figure.suptitle("Directional Confusion Matrices and ROC")
-    for axis, result in zip(row[:-1], results, strict=True):
-        draw_confusion(axis, result.evaluation.signal.confusion, title=result.label, compact=True)
-    roc_axis = row[-1]
+    figure, roc_axis = plt.subplots(figsize=(6.4, 5.6))
+    plotted = False
     for result in results:
         signal = result.evaluation.signal
         if signal.roc is None:
@@ -210,24 +225,27 @@ def _plot_confusion_and_roc(comparison: ComparisonEvaluation) -> list[tuple[str,
             color=colors[result.label],
             label=f"{result.label} (AUC {auc:.3f})",
         )
+        plotted = True
     roc_axis.plot([0, 1], [0, 1], color="black", linestyle="--", linewidth=0.8)
-    roc_axis.set_title("ROC curve")
+    roc_axis.set_title("Directional ROC Curve")
     roc_axis.set_xlabel("False positive rate")
     roc_axis.set_ylabel("True positive rate")
     roc_axis.grid(True, alpha=0.2)
-    roc_axis.legend(fontsize="small")
+    if plotted:
+        roc_axis.legend(fontsize="small")
     figure.tight_layout()
-    return [("confusion_roc", figure)]
+    return [("roc_curve", figure)]
 
 
 def build_comparison_figures(comparison: ComparisonEvaluation) -> list[tuple[str, Figure]]:
     """Build every cross-model comparison figure and return them without showing any.
 
-    Concatenates the portfolio, signal, and confusion/ROC figures, omitting any that had no
-    data to plot.
+    Concatenates the portfolio, signal, confusion-matrix, and ROC figures, omitting any that had
+    no data to plot.
     """
     return [
         *_plot_portfolio_comparison(comparison),
         *_plot_signal_comparison(comparison),
-        *_plot_confusion_and_roc(comparison),
+        *_plot_confusion_matrices(comparison),
+        *_plot_roc(comparison),
     ]

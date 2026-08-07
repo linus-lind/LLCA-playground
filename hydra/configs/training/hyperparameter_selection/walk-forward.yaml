@@ -1,0 +1,27 @@
+# Inner walk-forward cross-validation performed entirely inside each outer training window.
+# End-anchored like the outer split: the newest inner fold's validation ends on the last date
+# available in the outer training data, and earlier folds step backward, so an inner remainder is
+# dropped from the oldest side. Each model contributes its own `search_space` and baseline values.
+enabled: true
+search:
+  method: "grid" # "grid" | "random" (random consults n_trials/seed; grid is exhaustive)
+  n_trials: 64 # only used by random search
+  seed: 37
+cv:
+  # Geometry counts trading observations inside the outer training window (4250 for single_split).
+  # Inner train is a multi-year window so selected regularization transfers to the full refit;
+  # a one-year validation window gives each fold a stable portfolio-objective estimate. With this
+  # geometry the 4250-observation outer train yields 8 end-anchored folds
+  # ((4250 - (1260 + 1 + 252)) // 378 + 1), enough for a robust paired standard-error decision.
+  train_size: 1260
+  val_size: 252
+  step_size: 378
+  # One-step forward-return target -> purge exactly one observation (>= label horizon).
+  purge: 1
+  # Point-in-time baselines (the only models that tune) rebuild no history-dependent inputs.
+  lookback: 0
+  min_folds: 3
+selection:
+  # Adopt the best searched candidate only if its paired improvement over the baseline exceeds
+  # this many standard errors of the fold-level difference; 0 adopts on any mean improvement.
+  standard_error_margin: 0.0

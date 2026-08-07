@@ -1,5 +1,5 @@
 name: "fmg-ctct-1"
-d_model: 32
+d_model: 48
 feature_embedding_dim: 16
 dropout: 0.1
 sequence_length: 252
@@ -13,13 +13,18 @@ inputs:
   context:
     - "firm_characteristics"
     - "macro"
+standardization:
+  half_life: 126
 cnn:
   layers:
     - { out_channels: 8, kernel_size: [2, 1], padding: [0, 0] }
     - { out_channels: 8, kernel_size: [4, 1], padding: [0, 0] }
     - { out_channels: 8, kernel_size: [5, 1], padding: [0, 0] }
 transformer:
-  n_heads: 4
+  n_heads: 3
 supervision:
   dataset: "loss"
   column: "fwd_return"
+risk_free:
+  dataset: "risk_free"
+  column: "rf"

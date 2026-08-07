@@ -1,8 +1,21 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 from torch import Tensor, nn
 
 from llca.models.modules.conv_layer import ConvLayer
+
+
+def temporal_buffer_size(layers: Iterable[ConvLayer]) -> int:
+    """Return the input rows consumed by temporal shrinkage across ``layers``.
+
+    Each causal layer drops ``kernel_height - 1 - 2 * pad_height`` timesteps; summed over the
+    stack this is the extra leading history a caller must prepend to recover a chosen output
+    length. Shared by :class:`TemporalCNN` and the estimators' history accounting so the
+    shrinkage arithmetic has a single definition.
+    """
+    return sum(layer.kernel_height - 1 - 2 * layer.pad_height for layer in layers)
 
 
 class TemporalCNN(nn.Module):
@@ -15,7 +28,7 @@ class TemporalCNN(nn.Module):
     rows when they require a specific output length.
     """
 
-    def __init__(self, model_dim: int, layers: list[ConvLayer], *, dropout: float = 0.0) -> None:
+    def __init__(self, model_dim: int, layers: list[ConvLayer], dropout: float) -> None:
         super().__init__()
         if not layers:
             raise ValueError("TemporalCNN requires at least one convolutional layer")
@@ -58,7 +71,7 @@ class TemporalCNN(nn.Module):
     @property
     def buffer_size(self) -> int:
         """Return the input rows consumed by temporal shrinkage across all layers."""
-        return sum(layer.kernel_height - 1 - 2 * layer.pad_height for layer in self.layers)
+        return temporal_buffer_size(self.layers)
 
     def forward(self, x: Tensor) -> Tensor:
         """Convolve ``[N, T_in, D]`` into ``[N, T_in - buffer_size, D]``."""

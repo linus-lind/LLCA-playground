@@ -55,6 +55,16 @@ coupling the core to that library.
 `panel` or `rows` objective layout, or provide a pure adapter for a different tensor shape.
 This keeps analytical evaluation independent of concrete architecture classes.
 
+## Optional hyperparameter selection
+
+A statistical estimator may select its hyperparameters through inner walk-forward
+cross-validation inside the outer training window. Read tunable values through `_tuned(name)`
+in `_construct`, declare the searchable names in `ModelCapabilities.tunable_parameters`, thread
+the deployment objective and built `HyperparameterSelection` into the estimator in the registry
+`build`, and add a `search_space` plus baseline values to the model config. The reusable
+selection algorithm in `llca.training.tuning` is model-agnostic and is not modified per model.
+See [`HYPERPARAMETER_SELECTION.md`](HYPERPARAMETER_SELECTION.md).
+
 ## Add configuration and tests
 
 Add a model group YAML under `hydra/configs/training/model/`. Put only architecture and

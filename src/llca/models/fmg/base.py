@@ -37,17 +37,23 @@ class FmgLocalModel(nn.Module):
         self.selection_context_name = _SELECTION_CONTEXT
         self.grn_context_name = _GRN_CONTEXT
 
+        # Context is embedded and refined entirely at ``feature_embedding_dim``: it only
+        # ever conditions downstream GRNs (which project it into their own hidden width),
+        # so the same cheap width serves as the context encoder's embedding dimension and
+        # as the local encoder's single context conditioning width.
         self.context_encoder = ContextEncoder(
-            num_context_vars, model_dim, (_SELECTION_CONTEXT, _GRN_CONTEXT), dropout=dropout
+            num_context_vars,
+            feature_embedding_dim,
+            (_SELECTION_CONTEXT, _GRN_CONTEXT),
+            dropout=dropout,
         )
         self.feature_encoder = LocalFeatureEncoder(
             num_features=num_features,
             model_dim=model_dim,
             feature_embedding_dim=feature_embedding_dim,
             cnn_layers=cnn_layers,
-            selection_context_size=model_dim,
-            grn_context_size=model_dim,
             dropout=dropout,
+            context_dim=feature_embedding_dim,
         )
         self.head = ScoreHead(model_dim, score_activation)
 

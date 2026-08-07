@@ -2,14 +2,14 @@ asset_returns:
   - name: "trading_calendar_filter"
     calendar: "${calendar}"
   - name: "corporate_adjustment"
-    price_columns: ["open"]
+    price_columns: ["close"]
     price_factor: "price_adjustment_factor"
   - name: "deduplicate"
   - name: "consistency_check"
     constraints:
       - name: "positive"
         expressions:
-          - left: ["open"]
+          - left: ["close"]
             op: "gt"
             right: 0
         invalidate: "left"
@@ -33,7 +33,6 @@ firm_characteristics:
           - left: [
               "total_assets_quarterly",
               "common_shares_outstanding_quarterly",
-              "market_value_total_quarter_end",
               "total_assets_annual"
             ]
             op: "gt"

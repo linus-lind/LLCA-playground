@@ -135,6 +135,9 @@ class FmgSingleAssetEstimator(FmgEstimator):
         allocations = torch.zeros(n_dates, 1, device=self._device)
         supervision = torch.zeros(n_dates, 1, device=self._device)
         mask = torch.ones(n_dates, 1, dtype=torch.bool, device=self._device)
+        risk_free = (
+            torch.zeros(n_dates, device=self._device) if windows.risk_free is not None else None
+        )
 
         for position, date_slice in enumerate(batch.dates):
             rows = date_slice.rows
@@ -161,8 +164,16 @@ class FmgSingleAssetEstimator(FmgEstimator):
             target_row = rows[target_position].to(self._device)
             allocations[position, 0] = day_allocation[0]
             supervision[position, 0] = windows.supervision[target_row]
+            if risk_free is not None:
+                assert windows.risk_free is not None
+                risk_free[position] = windows.risk_free[target_row]
 
-        loss_output = objective(allocations.float(), supervision.float(), mask)
+        if risk_free is None:
+            loss_output = objective(allocations.float(), supervision.float(), mask)
+        else:
+            loss_output = objective(
+                allocations.float(), supervision.float(), mask, risk_free=risk_free
+            )
         loss = self._loss_value(loss_output)
         return TrainingBatchOutput(
             loss=loss,
@@ -193,7 +204,7 @@ class FmgTargetOnlyEstimator(FmgSingleAssetEstimator):
     @torch.inference_mode()
     def predict(self, test: MaskedPanels) -> PredictionOutput:
         """Return target allocations without constructing any non-target sequence."""
-        if self._model is None or self._feature_scaler is None or self._context_scaler is None:
+        if self._model is None or self._feature_ewma is None:
             raise RuntimeError(f"{self._MODEL_NAME} is not fitted")
         self._model.eval()
         target_test = self._target_only_split(test)
@@ -211,8 +222,8 @@ class FmgTargetOnlyEstimator(FmgSingleAssetEstimator):
 
         features_raw = cast(WindowedTensor, tensors["features"])
         context_val, context_age = cast(tuple[Tensor, Tensor], tensors["context"])
-        features = self._windowed_field(features_raw, self._feature_scaler)
-        context = self._field((context_val, context_age), self._context_scaler)
+        features = self._windowed_field(features_raw)
+        context = self._field((context_val, context_age))
 
         values: list[float] = []
         for position in range(len(index)):

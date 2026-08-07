@@ -5,17 +5,17 @@ defaults:
   - masking: "sp500-membership"
   - loss: null
   - model: null
-  - training: "torch"
+  - training: null
+  - hyperparameter_selection: null
   - recovery: "off"
   - split: "single_split"
   - experiment: "fmg-clstm"
   - _self_
 
-experiment_name: ${model.name}
-mlflow_tracking_uri: "sqlite:///mlflow.db"
-
 calendar: "XNYS"
 trading_year: 252
+
+mlflow_tracking_uri: "sqlite:///mlflow.db"
 
 hydra:
   run:

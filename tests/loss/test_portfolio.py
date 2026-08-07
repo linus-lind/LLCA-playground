@@ -121,6 +121,60 @@ class PortfolioLossTest(unittest.TestCase):
         self.assertIsNotNone(scores.grad)
         self.assertGreater(float(scores.grad.abs().sum()), 0.0)  # type: ignore[union-attr]
 
+    def test_absent_risk_free_matches_zero_cash_return(self) -> None:
+        objective = _loss(normalization="bounded", risk_aversion=0.0)
+        scores = torch.tensor([[0.3, 0.2], [0.4, 0.1]])
+        returns = torch.tensor([[0.10, -0.05], [0.02, 0.03]])
+
+        absent = objective(scores, returns)
+        explicit_zero = objective(scores, returns, risk_free=torch.zeros(2))
+
+        torch.testing.assert_close(absent.loss, explicit_zero.loss)
+        self.assertAlmostEqual(float(absent.cash_return), 0.0)
+
+    def test_risk_free_adds_cash_return_on_underinvested_book(self) -> None:
+        objective = _loss(normalization="bounded", risk_aversion=0.0)
+        scores = torch.tensor([[0.3, 0.2]])  # net 0.5, residual cash 0.5
+        returns = torch.tensor([[0.10, 0.20]])
+
+        output = objective(scores, returns, risk_free=torch.tensor([0.01]))
+
+        # mean_return is cash-inclusive: risky 0.07 plus 0.5 cash at 1% = 0.075.
+        self.assertAlmostEqual(float(output.mean_return), 0.075, places=6)
+        self.assertAlmostEqual(float(output.cash_return), 0.005, places=6)
+        self.assertAlmostEqual(float(output.loss), -0.075, places=6)
+
+    def test_risk_free_changes_loss_when_only_residual_cash_differs(self) -> None:
+        objective = _loss(normalization="bounded", risk_aversion=0.0)
+        returns = torch.tensor([[0.10, 0.0]])
+        risk_free = torch.tensor([0.02])
+
+        # Both allocations have identical risky contribution (0.05) but different net exposure,
+        # so only the residual-cash term can move the loss.
+        less_invested = objective(torch.tensor([[0.5, 0.0]]), returns, risk_free=risk_free)
+        more_invested = objective(torch.tensor([[0.5, 0.3]]), returns, risk_free=risk_free)
+
+        self.assertAlmostEqual(float(less_invested.mean_return), 0.05 + 0.5 * 0.02, places=6)
+        self.assertAlmostEqual(float(more_invested.mean_return), 0.05 + 0.2 * 0.02, places=6)
+        self.assertGreater(float(more_invested.loss), float(less_invested.loss))
+
+    def test_risk_free_must_be_one_rate_per_date(self) -> None:
+        objective = _loss(normalization="bounded")
+        scores = torch.zeros(2, 3)
+        with self.assertRaisesRegex(ValueError, "one rate per date"):
+            objective(scores, torch.zeros(2, 3), risk_free=torch.zeros(3))
+
+    def test_gradient_flows_to_scores_but_not_to_risk_free(self) -> None:
+        objective = _loss(normalization="bounded", risk_aversion=0.0)
+        scores = torch.tensor([[0.3, 0.2]], requires_grad=True)
+        risk_free = torch.tensor([0.05])  # data input, no grad tracked
+
+        objective(scores, torch.tensor([[0.1, 0.2]]), risk_free=risk_free).loss.backward()
+
+        self.assertIsNotNone(scores.grad)
+        self.assertGreater(float(scores.grad.abs().sum()), 0.0)  # type: ignore[union-attr]
+        self.assertIsNone(risk_free.grad)
+
     def test_net_exposure_penalty_respects_tolerance_band(self) -> None:
         objective = _loss(
             normalization="bounded",

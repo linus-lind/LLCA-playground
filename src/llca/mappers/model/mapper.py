@@ -40,6 +40,13 @@ def build_model(
     *,
     loss: nn.Module | None = None,
     loss_config: DictConfig | None = None,
+    hyperparameter_selection: DictConfig | None = None,
 ) -> EstimatorFactory:
-    """Build a factory while exposing objective runtime and config to its plugin."""
-    return model_registry.build(cfg.name, cfg, loss=loss, loss_config=loss_config)
+    """Build a factory while exposing objective runtime, config, and tuning policy to its plugin."""
+    return model_registry.build(
+        cfg.name,
+        cfg,
+        loss=loss,
+        loss_config=loss_config,
+        hyperparameter_selection=hyperparameter_selection,
+    )

@@ -14,6 +14,7 @@ class FmgDiagnosticsTest(unittest.TestCase):
         output = PortfolioLossOutput(
             loss=loss,
             mean_return=loss + 1.0,
+            cash_return=loss + 1.5,
             variance=loss + 2.0,
             turnover=loss + 3.0,
             cost=loss + 4.0,

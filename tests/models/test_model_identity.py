@@ -16,12 +16,13 @@ class ModelIdentityTest(unittest.TestCase):
         self.assertEqual(
             model_registry.available(),
             [
+                "elastic-net",
                 "equal-weight",
                 "fmg-clstm",
                 "fmg-ctct-1",
                 "fmg-ctct-2",
                 "fmg-ctt",
-                "random-long-short",
+                "inverse-volatility",
                 "rf",
             ],
         )

@@ -15,6 +15,14 @@ from llca.analytics.evaluation.portfolio_attribution import (
 from llca.analytics.inputs.risk_free import align_risk_free
 from llca.analytics.modules.portfolio_evaluation import PortfolioEvaluation
 from llca.analytics.stats.statistics import EPS, shape_statistics
+from llca.core.portfolio_accounting import (
+    cash_return_contribution,
+    drifted_weights,
+    gross_return,
+    portfolio_nav_growth,
+    residual_cash_weight,
+    risky_return,
+)
 from llca.core.returns import ReturnType
 from llca.data.index_spec import entity_level
 
@@ -88,24 +96,23 @@ def _turnover_and_costs(
     when ``include_initial_trade`` is set. Raises if portfolio NAV is wiped out on any date.
     """
     values = weights.to_numpy(dtype=float)
-    returns = asset_returns.to_numpy(dtype=float)
-    cash_returns = risk_free.reindex(weights.index).to_numpy(dtype=float)
     changes = np.zeros_like(values)
     if include_initial_trade:
         changes[0] = values[0]
-    for position in range(1, len(weights)):
-        previous = values[position - 1]
-        previous_returns = returns[position - 1]
-        previous_cash_weight = 1.0 - float(previous.sum())
-        nav_growth = (
-            1.0
-            + float(np.dot(previous, previous_returns))
-            + previous_cash_weight * cash_returns[position - 1]
+    if len(weights) > 1:
+        # Drift each prior date's holdings one period forward through the shared
+        # residual-cash-at-risk-free accounting, so training and analytics use one NAV rule.
+        previous_weights = torch.from_numpy(values[:-1])
+        previous_returns = torch.from_numpy(asset_returns.to_numpy(dtype=float)[:-1])
+        previous_cash = torch.from_numpy(
+            risk_free.reindex(weights.index).to_numpy(dtype=float)[:-1]
         )
-        if nav_growth <= EPS:
+        if bool(
+            (portfolio_nav_growth(previous_weights, previous_returns, previous_cash) <= EPS).any()
+        ):
             raise ValueError("portfolio NAV was exhausted before drifted turnover calculation")
-        drifted = previous * (1.0 + previous_returns) / nav_growth
-        changes[position] = values[position] - drifted
+        drifted = drifted_weights(previous_weights, previous_returns, previous_cash).numpy()
+        changes[1:] = values[1:] - drifted
 
     long_changes = np.abs(np.maximum(values, 0.0) - np.maximum(values - changes, 0.0)).sum(axis=1)
     short_changes = np.abs(np.maximum(-values, 0.0) - np.maximum(-(values - changes), 0.0)).sum(
@@ -419,11 +426,29 @@ def build_portfolio_evaluation(
     weights = _normalised_weights(score_frame, valid, normalize)
     asset_returns = _simple_returns(raw_return_frame.fillna(0.0), return_type).where(valid, 0.0)
     contributions = weights * asset_returns
-    risky_returns = contributions.sum(axis=1).rename("risky_return")
-    risk_free_daily = align_risk_free(risk_free, risky_returns.index)
-    cash_weight = (1.0 - weights.sum(axis=1)).rename("cash_weight")
-    cash_contribution = (cash_weight * risk_free_daily).rename("cash_return_contribution")
-    gross_returns = (risky_returns + cash_contribution).rename("gross_return")
+    risk_free_daily = align_risk_free(risk_free, weights.index)
+
+    # Route the portfolio-return accounting through the shared residual-cash-at-risk-free
+    # primitive so evaluation and the training objective cannot diverge on the convention.
+    weight_tensor = torch.from_numpy(weights.to_numpy(dtype=float))
+    return_tensor = torch.from_numpy(asset_returns.to_numpy(dtype=float))
+    risk_free_tensor = torch.from_numpy(risk_free_daily.to_numpy(dtype=float))
+    risky_returns = pd.Series(
+        risky_return(weight_tensor, return_tensor).numpy(), index=weights.index, name="risky_return"
+    )
+    cash_weight = pd.Series(
+        residual_cash_weight(weight_tensor).numpy(), index=weights.index, name="cash_weight"
+    )
+    cash_contribution = pd.Series(
+        cash_return_contribution(weight_tensor, risk_free_tensor).numpy(),
+        index=weights.index,
+        name="cash_return_contribution",
+    )
+    gross_returns = pd.Series(
+        gross_return(weight_tensor, return_tensor, risk_free_tensor).numpy(),
+        index=weights.index,
+        name="gross_return",
+    )
 
     turnover, costs = _turnover_and_costs(
         weights,

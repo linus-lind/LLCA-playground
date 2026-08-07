@@ -27,14 +27,18 @@ def significance_stars(p_value: float) -> str:
 
 
 def significance_marker(p_value: float) -> str:
-    """Format a p-value's stars as a suffix to append after a printed value.
+    """Format a p-value's significance as a suffix to append after a printed value.
 
-    The stars are wrapped in parentheses and prefixed with a space (`` (***)``) so they read
-    cleanly next to the number; a p-value that clears no level yields an empty suffix. The
-    output is plain text and renders identically in every export format.
+    A *tested* p-value always yields a parenthesised, space-prefixed suffix: its stars
+    (`` (***)``, `` (**)``, `` (*)``) when it clears the 1%, 5%, or 10% level, or `` (ns)`` when
+    it was checked but clears none. A non-finite p-value means the value was not tested and
+    yields an empty suffix, so a blank cell is unambiguously "not checked" rather than "checked
+    and not significant". The output is plain text and renders identically in every export format.
     """
+    if not np.isfinite(p_value):
+        return ""
     stars = significance_stars(p_value)
-    return f" ({stars})" if stars else ""
+    return f" ({stars})" if stars else " (ns)"
 
 
 def significance_marker_bold(p_value: float) -> str:
@@ -42,12 +46,15 @@ def significance_marker_bold(p_value: float) -> str:
 
     Because matplotlib can only embolden a substring via mathtext, the stars are emitted as a
     ``$\\mathbf{...}$`` fragment with the parentheses left outside the math group so they stay
-    upright. Negative thin spaces close the gaps between adjacent stars. An empty suffix is
-    returned when no level is cleared.
+    upright; negative thin spaces close the gaps between adjacent stars. A checked-but-not-
+    significant p-value yields `` (ns)`` and a non-finite (untested) one an empty suffix, matching
+    :func:`significance_marker`.
     """
+    if not np.isfinite(p_value):
+        return ""
     stars = significance_stars(p_value)
     if not stars:
-        return ""
+        return " (ns)"
     inner = r"\!\!".join([r"\ast"] * len(stars))
     return rf" ($\mathbf{{{inner}}}$)"
 

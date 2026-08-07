@@ -26,6 +26,10 @@ TRAINING_CONFIGS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ),
     ("fmg-ctt", ("experiment=fmg-ctt", "model.target.entity_id=1")),
     ("fmg-clstm", ("experiment=fmg-clstm", "model.target.entity_id=1")),
+    ("rf", ("experiment=rf",)),
+    ("elastic-net", ("experiment=elastic-net",)),
+    ("equal-weight", ("experiment=equal-weight",)),
+    ("inverse-volatility", ("experiment=inverse-volatility",)),
 )
 
 

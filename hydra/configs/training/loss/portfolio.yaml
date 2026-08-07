@@ -1,7 +1,7 @@
 name: "portfolio"
 leverage: 1.0
 normalization: "bounded"
-return_type: "log"
+return_type: "simple"
 risk_aversion: 1.0
 concentration_aversion: 0.0
 common_score_aversion: 0.0

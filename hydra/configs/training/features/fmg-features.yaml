@@ -1,13 +1,28 @@
 daily_values:
-  - { name: "log_change", column: "close", horizon: 1, as: "cc_return" }
-  - { name: "log_ratio", numerator: "close", denominator: "open", as: "oc_return" }
-  - { name: "log_difference", current: "open", previous: "close", as: "co_return" }
-  - { name: "log_ratio", numerator: "high", denominator: "low", as: "high_low_range" }
+  - { name: "simple_change", column: "close", horizon: 1, as: "cc_return" }
+  - { name: "simple_ratio", numerator: "close", denominator: "open", as: "oc_return" }
+  - { name: "simple_difference", current: "open", previous: "close", as: "co_return" }
+  - { name: "simple_ratio", numerator: "high", denominator: "low", as: "high_low_range" }
   - { name: "range_location", high: "high", low: "low", value: "close", as: "close_location" }
-  - { name: "log_change", column: "volume", horizon: 1, as: "volume_change" }
-  - { name: "log_change", column: "volume", times: "close", horizon: 1, as: "dollar_volume_change" }
+  - { name: "simple_change", column: "volume", horizon: 1, as: "volume_change" }
+  - { name: "simple_change", column: "volume", times: "close", horizon: 1, as: "dollar_volume_change" }
   - { name: "ratio", numerator: "volume", denominator: "shares_outstanding", as: "turnover" }
   - { name: "relative_spread", upper: "ask", lower: "bid", as: "relative_spread" }
+  - { name: "simple_change", column: "close", horizon: 21, as: "momentum_1m" }
+  - { name: "simple_change", column: "close", horizon: 63, as: "momentum_3m" }
+  - { name: "simple_change", column: "close", horizon: 126, as: "momentum_6m" }
+  - { name: "simple_change", column: "close", horizon: 252, as: "momentum_12m" }
+  - { name: "simple_change", column: "close", horizon: 231, shift: 21, as: "momentum_12_1" }
+  - { name: "rolling_volatility", column: "close", window: 21, as: "realized_vol_1m" }
+  - { name: "rolling_volatility", column: "close", window: 63, as: "realized_vol_3m" }
+  - { name: "rolling_volatility", column: "close", window: 126, as: "realized_vol_6m" }
+  - { name: "rolling_volatility", column: "close", window: 252, as: "realized_vol_12m" }
+  - { name: "amihud_illiquidity", price: "close", volume: "volume", window: 21, log: false, as: "illiquidity_1m" }
+  - { name: "amihud_illiquidity", price: "close", volume: "volume", window: 63, log: false, as: "illiquidity_3m" }
+  - { name: "downside_deviation", column: "close", window: 21, as: "downside_dev_1m" }
+  - { name: "downside_deviation", column: "close", window: 63, as: "downside_dev_3m" }
+  - { name: "rolling_skewness", column: "close", window: 63, as: "return_skew_3m" }
+  - { name: "high_proximity", value: "close", high: "high", window: 252, as: "high_52w_proximity" }
 
 firm_characteristics:
   # Profitability
@@ -15,7 +30,6 @@ firm_characteristics:
   - { name: "ratio", numerator: "net_income_quarterly", denominator: "common_equity_quarterly", as: "return_on_equity" }
   - { name: "ratio", numerator: "net_income_quarterly", denominator: "net_sales_quarterly", as: "net_margin" }
   - { name: "ratio", numerator: "operating_income_after_depreciation_quarterly", denominator: "net_sales_quarterly", as: "operating_margin" }
-  - { name: "ratio", numerator: "operating_income_before_depreciation_quarterly", denominator: "net_sales_quarterly", as: "ebitda_margin" }
   - { name: "ratio", numerator: "cost_of_goods_sold_quarterly", denominator: "net_sales_quarterly", as: "cogs_to_sales" }
   # Efficiency / activity
   - { name: "ratio", numerator: "net_sales_quarterly", denominator: "total_assets_quarterly", as: "asset_turnover" }
@@ -32,23 +46,19 @@ firm_characteristics:
   - { name: "ratio", numerator: "selling_general_admin_expense_quarterly", denominator: "net_sales_quarterly", as: "sga_intensity" }
   - { name: "ratio", numerator: "capital_expenditures_annual", denominator: "total_assets_annual", as: "capex_intensity" }
   - { name: "ratio", numerator: "common_dividends_annual", denominator: "net_income_annual", as: "dividend_payout" }
-  # Valuation (fundamental / market value)
-  - { name: "ratio", numerator: "net_income_quarterly", denominator: "market_value_total_quarter_end", as: "earnings_yield" }
-  - { name: "ratio", numerator: "common_equity_quarterly", denominator: "market_value_total_quarter_end", as: "book_to_market" }
-  - { name: "ratio", numerator: "net_sales_quarterly", denominator: "market_value_total_quarter_end", as: "sales_to_price" }
   # Growth: year-over-year (4 quarters) log-change on the densely-populated
   # quarterly levels, which avoids seasonality and the sparsity of annual rows.
-  - { name: "log_change", column: "net_sales_quarterly", horizon: 4, skip_missing: true, as: "revenue_growth" }
-  - { name: "log_change", column: "total_assets_quarterly", horizon: 4, skip_missing: true, as: "asset_growth" }
-  - { name: "log_change", column: "common_equity_quarterly", horizon: 4, skip_missing: true, as: "equity_growth" }
+  - { name: "simple_change", column: "net_sales_quarterly", horizon: 4, skip_missing: true, as: "revenue_growth" }
+  - { name: "simple_change", column: "total_assets_quarterly", horizon: 4, skip_missing: true, as: "asset_growth" }
+  - { name: "simple_change", column: "common_equity_quarterly", horizon: 4, skip_missing: true, as: "equity_growth" }
 
 macro:
-  - { name: "log_change", column: "sp500_price_index", horizon: 1, as: "market_return" }
-  - { name: "log_change", column: "dxy", horizon: 1, as: "dollar_return" }
-  - { name: "log_change", column: "cpi", horizon: "${trading_year}", as: "inflation_yoy" }
-  - { name: "log_change", column: "us_personal_consumption", horizon: "${trading_year}", as: "consumption_yoy" }
-  - { name: "log_change", column: "nonfarm_employment", horizon: "${trading_year}", as: "employment_yoy" }
-  - { name: "log_change", column: "fed_total_assets", horizon: "${trading_year}", as: "fed_assets_yoy" }
+  - { name: "simple_change", column: "sp500_price_index", horizon: 1, as: "market_return" }
+  - { name: "simple_change", column: "dxy", horizon: 1, as: "dollar_return" }
+  - { name: "simple_change", column: "cpi", horizon: "${trading_year}", as: "inflation_yoy" }
+  - { name: "simple_change", column: "us_personal_consumption", horizon: "${trading_year}", as: "consumption_yoy" }
+  - { name: "simple_change", column: "nonfarm_employment", horizon: "${trading_year}", as: "employment_yoy" }
+  - { name: "simple_change", column: "fed_total_assets", horizon: "${trading_year}", as: "fed_assets_yoy" }
   - { name: "ratio", numerator: "nyse_advancing_volume", denominator: "nyse_declining_volume", as: "advance_decline_ratio" }
   - { name: "passthrough", column: "nfci", as: "nfci" }
   - { name: "passthrough", column: "nfci_adjusted", as: "nfci_adjusted" }
@@ -62,4 +72,12 @@ macro:
   - { name: "passthrough", column: "umich_consumer_sentiment", as: "consumer_sentiment" }
 
 loss:
-  - { name: "log_change", column: "open", horizon: 1, shift: -2, as: "fwd_return" }
+  - { name: "simple_change", column: "close", horizon: 1, shift: -1, as: "fwd_return" }
+  # Direction of the same forward return, aligned identically, as the single-asset
+  # classification benchmarks' training label (evaluation still uses fwd_return).
+  - { name: "positive_indicator", column: "close", horizon: 1, shift: -1, as: "fwd_direction" }
+
+risk_free:
+  # Shift -1 pairs each decision date t with the risk-free return realized over the same
+  # t -> t+1 holding period as fwd_return, so residual cash is funded over the traded horizon.
+  - { name: "passthrough", column: "rf", shift: -1, as: "rf" }

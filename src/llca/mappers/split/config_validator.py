@@ -6,6 +6,7 @@ from omegaconf import DictConfig
 
 from llca.mappers.config_validation import ConfigField, check_fields, register_validator
 from llca.mappers.split.mapper import splitter_registry
+from llca.mappers.supervision import supervision_forward_horizon
 
 _SPLIT_FIELDS = [
     ConfigField("train_size", "int", positive=True),
@@ -44,4 +45,28 @@ def _validate_split(cfg: DictConfig) -> list[str]:
         )
     else:
         errors.extend(splitter_registry.validate(name, split))
+    errors.extend(_validate_purge_horizon(split, cfg))
     return errors
+
+
+def _validate_purge_horizon(split: DictConfig, cfg: DictConfig) -> list[str]:
+    """Require the purge to cover the supervision label's forward horizon.
+
+    Purge guards against the last training label realizing inside the next scored window, so it
+    must be at least the target's forward horizon regardless of the model's sequence length or
+    feature windows. The current one-step close-to-close return needs a purge of ``1``; a future
+    multi-step target raises the requirement without any splitter change.
+    """
+    horizon = supervision_forward_horizon(cfg)
+    purge = split.get("purge_size")
+    if (
+        horizon is not None
+        and isinstance(purge, int)
+        and not isinstance(purge, bool)
+        and purge < horizon
+    ):
+        return [
+            f"split.purge_size ({purge}) must be >= the supervision label forward horizon "
+            f"({horizon}) to prevent train/validation/test target leakage"
+        ]
+    return []

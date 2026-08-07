@@ -139,7 +139,7 @@ class ComparisonEvaluationTest(unittest.TestCase):
             )
             self.assertEqual(
                 [name for name, _ in single_figures],
-                ["portfolio_comparison", "signal_comparison", "confusion_roc"],
+                ["portfolio_comparison", "signal_comparison", "confusion_matrices", "roc_curve"],
             )
         finally:
             for _, figure in (*single_figures, *multiple_figures):

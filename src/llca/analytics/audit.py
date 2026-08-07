@@ -14,6 +14,7 @@ from omegaconf import DictConfig, OmegaConf
 from llca.analytics.comparison import ComparisonEvaluation
 from llca.analytics.modules.registered_model import RegisteredModelMetadata
 from llca.analytics.reporting import PublicationReport
+from llca.core.portfolio_accounting import FUNDING_CONVENTION
 from llca.core.provenance.environment import build_environment_manifest
 from llca.core.provenance.source import SOURCE_FINGERPRINT_TAG, source_fingerprint
 from llca.utils.git import git_commit, git_dirty
@@ -40,7 +41,14 @@ def _portfolio_accounting(config: DictConfig) -> dict[str, object] | None:
     loss = config.get("loss")
     if not isinstance(loss, DictConfig) or loss.get("name") != "portfolio":
         return None
-    return {field: loss.get(field) for field in _ACCOUNTING_FIELDS}
+    accounting: dict[str, object] = {field: loss.get(field) for field in _ACCOUNTING_FIELDS}
+    accounting["funding_convention"] = FUNDING_CONVENTION
+    model = config.get("model")
+    risk_free = model.get("risk_free") if isinstance(model, DictConfig) else None
+    if isinstance(risk_free, DictConfig):
+        accounting["risk_free_dataset"] = risk_free.get("dataset")
+        accounting["risk_free_column"] = risk_free.get("column")
+    return accounting
 
 
 def build_analytics_manifest(
@@ -86,7 +94,7 @@ def build_analytics_manifest(
             "common_dates": int(
                 comparison.results[0].evaluation.dates if comparison.results else 0
             ),
-            "funding_convention": "residual_cash_at_risk_free",
+            "funding_convention": FUNDING_CONVENTION,
         },
         "models": [
             {

@@ -91,13 +91,17 @@ class SingleAssetPortfolioTest(unittest.TestCase):
 
     def test_objective_matrices_entity_less_is_sorted_by_date(self) -> None:
         perm = np.random.RandomState(2).permutation(len(self.dates))
-        sorted_scores, sorted_targets, sorted_valid = _objective_matrices(self.scores, self.returns)
-        shuffled_scores, shuffled_targets, shuffled_valid = _objective_matrices(
+        sorted_scores, sorted_targets, sorted_valid, sorted_dates = _objective_matrices(
+            self.scores, self.returns
+        )
+        shuffled_scores, shuffled_targets, shuffled_valid, shuffled_dates = _objective_matrices(
             self.scores.iloc[perm], self.returns.iloc[perm]
         )
         np.testing.assert_allclose(sorted_scores.numpy(), shuffled_scores.numpy())
         np.testing.assert_allclose(sorted_targets.numpy(), shuffled_targets.numpy())
         np.testing.assert_array_equal(sorted_valid.numpy(), shuffled_valid.numpy())
+        # The recovered date axis is chronological regardless of input row order.
+        self.assertTrue(sorted_dates.equals(shuffled_dates))
 
 
 class SingleAssetComparisonTest(unittest.TestCase):

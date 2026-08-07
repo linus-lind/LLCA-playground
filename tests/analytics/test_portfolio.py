@@ -5,6 +5,7 @@ import pandas as pd
 
 from llca.analytics.evaluation.portfolio import build_portfolio_evaluation
 from llca.analytics.inputs.risk_free import align_risk_free
+from llca.analytics.modules.portfolio_evaluation import PortfolioEvaluation
 from llca.loss.portfolio import PortfolioLoss
 
 
@@ -410,6 +411,122 @@ class PortfolioEvaluationTest(unittest.TestCase):
         )
 
         self.assertEqual(list(result.signal_attribution.index), [1, 2])
+
+
+class TrainingAnalyticsParityTest(unittest.TestCase):
+    """The training objective and analytics evaluation must agree on the shared accounting."""
+
+    def setUp(self) -> None:
+        self.dates = pd.date_range("2024-01-01", periods=4)
+        self.index = pd.MultiIndex.from_product(
+            [self.dates, ["A", "B"]], names=["date", "instrument"]
+        )
+        # Bounded weights whose per-date gross <= 1, so normalize is the identity and the
+        # scores are exactly the weights fed to both the loss and analytics.
+        self.weights = np.array([[0.3, -0.2], [0.1, 0.4], [-0.5, 0.2], [0.25, 0.25]])
+        self.asset_returns = np.array([[0.02, -0.03], [0.01, 0.04], [-0.02, 0.03], [0.05, -0.01]])
+        self.rf = np.array([0.001, 0.002, 0.003, 0.004])
+        self.scores = pd.Series(self.weights.ravel(), index=self.index)
+        self.returns = pd.Series(self.asset_returns.ravel(), index=self.index)
+        self.risk_free = pd.Series(self.rf, index=self.dates)
+        self.objective = PortfolioLoss(
+            leverage=1.0,
+            risk_aversion=0.0,
+            concentration_aversion=0.0,
+            execution_fee=0.0,
+            bid_ask_spread=0.0,
+            slippage=0.0,
+            borrow_cost=0.0,
+            normalization="bounded",
+            return_type="simple",
+            common_score_aversion=0.0,
+            net_exposure_aversion=0.0,
+            net_exposure_tolerance=0.0,
+        )
+
+    def _analytics(self) -> PortfolioEvaluation:
+        return build_portfolio_evaluation(
+            self.scores,
+            self.returns,
+            normalize=self.objective.normalize_weights,
+            return_type="simple",
+            annualization_periods=252,
+            risk_free=self.risk_free,
+            minimum_acceptable_return=0.0,
+            var_levels=(0.95,),
+            rolling_window=2,
+            signal_buckets=2,
+            active_weight_threshold=0.0001,
+            include_initial_trade=False,
+            execution_fee=0.0,
+            bid_ask_spread=0.0,
+            slippage=0.0,
+            borrow_cost=0.0,
+        )
+
+    def test_gross_return_matches_the_shared_primitive_used_by_training(self) -> None:
+        import torch
+
+        from llca.core.portfolio_accounting import (
+            cash_return_contribution,
+            drifted_weights,
+            gross_return,
+            residual_cash_weight,
+        )
+
+        result = self._analytics()
+        # Feed analytics' own (float32-normalized) weights into the shared primitive so the
+        # comparison isolates the accounting identity, not weight-normalization precision.
+        weights = torch.from_numpy(result.weights.to_numpy(dtype=float))
+        returns = torch.from_numpy(self.asset_returns)
+        rf = torch.from_numpy(self.rf)
+
+        # Gross return agrees on every date (no boundary ambiguity), applying rf exactly once.
+        np.testing.assert_allclose(
+            result.daily["gross_return"].to_numpy(),
+            gross_return(weights, returns, rf).numpy(),
+            rtol=0,
+            atol=1e-12,
+        )
+        np.testing.assert_allclose(
+            result.daily["cash_return_contribution"].to_numpy(),
+            cash_return_contribution(weights, rf).numpy(),
+            rtol=0,
+            atol=1e-12,
+        )
+        # Residual cash earned exactly once: cash contribution equals cash weight times rf.
+        np.testing.assert_allclose(
+            result.daily["cash_return_contribution"].to_numpy(),
+            (residual_cash_weight(weights) * rf).numpy(),
+            rtol=0,
+            atol=1e-12,
+        )
+
+        # Interior drifted turnover (t >= 1) agrees; t = 0 is a per-caller boundary by design.
+        drifted = drifted_weights(weights[:-1], returns[:-1], rf[:-1])
+        expected_interior = (weights[1:] - drifted).abs().sum(dim=-1).numpy()
+        np.testing.assert_allclose(
+            result.turnover["l1_turnover"].to_numpy()[1:], expected_interior, rtol=0, atol=1e-12
+        )
+
+    def test_objective_mean_return_equals_analytics_gross_return(self) -> None:
+        import torch
+
+        result = self._analytics()
+        scores = torch.from_numpy(self.weights).float()
+        returns = torch.from_numpy(self.asset_returns).float()
+        rf = torch.from_numpy(self.rf).float()
+        output = self.objective(
+            scores, returns, torch.ones_like(scores, dtype=torch.bool), risk_free=rf
+        )
+        self.assertAlmostEqual(
+            float(output.mean_return), float(result.daily["gross_return"].mean()), places=6
+        )
+        self.assertAlmostEqual(
+            float(output.cash_return),
+            float(result.daily["cash_return_contribution"].mean()),
+            places=6,
+        )
 
 
 if __name__ == "__main__":

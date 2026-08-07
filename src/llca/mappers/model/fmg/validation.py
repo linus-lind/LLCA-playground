@@ -6,6 +6,7 @@ from omegaconf import DictConfig, ListConfig
 from torch import nn
 
 from llca.mappers.config_validation import ConfigField, as_list, check_fields, is_int
+from llca.mappers.model.objective_binding import loss_is_portfolio, validate_risk_free_binding
 from llca.pipeline.contracts import DataRequirements, DatasetRequirement, EntityScope
 
 _SCORE_ACTIVATIONS = ("identity", "softsign", "tanh")
@@ -23,6 +24,9 @@ _SUPERVISION_FIELDS = [
 ]
 _DIAGNOSTIC_FIELDS = [
     ConfigField("score_saturation_threshold", "number", positive=True),
+]
+_STANDARDIZATION_FIELDS = [
+    ConfigField("half_life", "number", positive=True),
 ]
 _TARGET_FIELDS = [ConfigField("entity_id", "int", positive=True)]
 _LSTM_FIELDS = [
@@ -52,6 +56,10 @@ def fmg_data_requirements(
     existing = scopes.get(supervision_name)
     if existing is None or supervision_scope is EntityScope.UNIVERSE:
         scopes[supervision_name] = supervision_scope
+    risk_free = model.get("risk_free")
+    if isinstance(risk_free, DictConfig):
+        # A date-only series shared across the universe; entity scope is immaterial for it.
+        scopes.setdefault(str(risk_free.dataset), EntityScope.UNIVERSE)
     target = model.get("target")
     target_entity = target.get("entity_id") if isinstance(target, DictConfig) else None
     return DataRequirements(
@@ -233,6 +241,14 @@ def _validate_diagnostics(model: DictConfig) -> list[str]:
     return check_fields(model.diagnostics, "model.diagnostics", _DIAGNOSTIC_FIELDS)
 
 
+def _validate_standardization(model: DictConfig) -> list[str]:
+    """Validate the stock-feature EWMA normalizer's half-life policy."""
+    errors = check_fields(model, "model", [ConfigField("standardization", "mapping")])
+    if errors:
+        return errors
+    return check_fields(model.standardization, "model.standardization", _STANDARDIZATION_FIELDS)
+
+
 def _validate_supervision(cfg: DictConfig) -> list[str]:
     """Validate the target dataset binding independently of feature inputs."""
     model = cfg.model
@@ -260,6 +276,7 @@ def _validate_fmg_base(cfg: DictConfig) -> list[str]:
     errors.extend(_validate_supervision(cfg))
     errors.extend(_validate_cnn(model))
     errors.extend(_validate_diagnostics(model))
+    errors.extend(_validate_standardization(model))
     return errors
 
 
@@ -267,6 +284,8 @@ def validate_transformer_fmg(cfg: DictConfig) -> list[str]:
     """Compose shared FMG and transformer-specific validation."""
     errors = _validate_fmg_base(cfg)
     errors.extend(_validate_transformer(cfg.model))
+    if loss_is_portfolio(cfg):
+        errors.extend(validate_risk_free_binding(cfg, str(cfg.model.get("name", "model"))))
     return errors
 
 
@@ -294,6 +313,7 @@ def validate_single_asset_allocation(
     leverage = loss.get("leverage")
     if not isinstance(leverage, int | float) or isinstance(leverage, bool) or leverage != 1.0:
         errors.append(f"{model_name} requires loss.leverage 1.0")
+    errors.extend(validate_risk_free_binding(cfg, model_name))
     return errors
 
 

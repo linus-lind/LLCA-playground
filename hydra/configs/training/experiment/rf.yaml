@@ -3,10 +3,11 @@ defaults:
   - override /model: "rf"
   - override /loss: "portfolio"
   - override /training: "sklearn"
+  - override /hyperparameter_selection: "walk-forward"
 
-experiment_name: "rf"
+experiment_name: "rf-baseline"
 
-# Cross-sectional models use no input window; purge only the 2-day forward-return horizon.
-split:
-  purge_size: 2
-  lookback: 0
+# Directional single-asset benchmark: gross normalization turns the signed probability score
+# into a fully-invested +-1 position (bounded would leave a near-0.5 probability almost flat).
+loss:
+  normalization: "gross"

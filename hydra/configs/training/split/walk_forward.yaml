@@ -1,7 +1,9 @@
 name: "walk_forward"
-train_size: 630
+train_size: 756
 val_size: 126
 test_size: 252
-purge_size: ${model.sequence_length}
+purge_size: 1
 step_size: ${split.test_size}
-lookback: ${model.sequence_length}
+# Left unset: defaults to the estimator's required_lookback (0 for point-in-time baselines,
+# sequence_length + CNN buffer - 1 for temporal models).
+lookback: null

@@ -95,3 +95,5 @@ class ModelCapabilities:
     objective_kinds: frozenset[ObjectiveKind]
     training_engines: frozenset[TrainingEngine]
     data_view: str = "aligned_panel"
+    tunable_parameters: frozenset[str] = frozenset()
+    """Hyperparameter names this model may select through inner cross-validation."""

@@ -13,8 +13,8 @@ from llca.mappers.model.mapper import model_registry
 from llca.models.estimators.fmg import FmgCttEstimator
 from llca.models.fmg import FmgCtt
 from llca.models.modules.conv_layer import ConvLayer
-from llca.models.utils.standardizer import Standardizer
-from tests.models.test_fmg_ctct_1 import _estimator_config, _objective, _panels
+from llca.models.utils.ewma_standardizer import EwmaStandardizer
+from tests.models.test_fmg_ctct_1 import _estimator_config, _objective, _panels, _tail_panels
 
 
 def _network() -> FmgCtt:
@@ -61,6 +61,10 @@ class FmgCttNetworkTest(unittest.TestCase):
         allocation.sum().backward()
 
         self.assertFalse(hasattr(model, "cross_sectional_attention"))
+        # Option 1: temporal self-attention carries no context pathway.
+        self.assertIsNone(model.temporal_attention.grn.context_projection)
+        # Context is embedded at feature_embedding_dim (4), not model_dim (8).
+        self.assertEqual(model.context_encoder.embedding_dim, 4)
         self.assertEqual(allocation.shape, (1,))
         self.assertLessEqual(abs(float(allocation.detach()[0])), 1.0)
         self.assertEqual(diagnostics["context"].shape, (1, 2))
@@ -87,15 +91,17 @@ class FmgCttEstimatorTest(unittest.TestCase):
         estimator._feature_columns = ["x1", "x2"]
         estimator._context_columns = ["c1", "c2"]
         estimator._model = estimator._build_model()
+        estimator._feature_ewma = EwmaStandardizer(
+            half_life=3.0, history_buffer=estimator.required_history
+        )
         panels = _panels()
+        estimator._feature_ewma.fit(panels["features"])
 
         raw = estimator._windows(panels)
         self.assertTrue((raw.index.get_level_values("instrument_id") == 101).all())
         self.assertEqual(raw.features.values.shape[0], 5)
         self.assertEqual(raw.context[0].shape[0], 3)
 
-        estimator._feature_scaler = Standardizer.fit(raw.features.values)
-        estimator._context_scaler = Standardizer.fit(raw.context[0])
         windows = estimator._to_windows(raw, batch_size=2)
         assert windows is not None
         self.assertTrue(all(batch.n_max == 1 for batch in windows.batches))
@@ -104,8 +110,10 @@ class FmgCttEstimatorTest(unittest.TestCase):
         self.assertTrue(bool(torch.isfinite(output.loss).item()))
         output.loss.backward()  # type: ignore[no-untyped-call]
 
-        baseline = estimator.predict(panels)
-        perturbed = estimator.predict(_perturb_non_target(panels))
+        # predict() sees a tail-only panel; see _tail_panels' docstring for why.
+        predict_panels = _tail_panels(panels, estimator.required_history)
+        baseline = estimator.predict(predict_panels)
+        perturbed = estimator.predict(_perturb_non_target(predict_panels))
         self.assertEqual(baseline.kind, "portfolio")
         assert isinstance(baseline.values, pd.Series)
         assert isinstance(perturbed.values, pd.Series)
@@ -116,7 +124,7 @@ class FmgCttEstimatorTest(unittest.TestCase):
             bundle = Path(tmp) / "fmg-ctt.pt"
             estimator._save(bundle)
             restored = FmgCttEstimator.load(bundle, torch.device("cpu"))
-            restored_prediction = restored.predict(panels)
+            restored_prediction = restored.predict(predict_panels)
         assert isinstance(restored_prediction.values, pd.Series)
         pd.testing.assert_series_equal(restored_prediction.values, baseline.values)
 

@@ -51,7 +51,7 @@ test: ## Run the complete unit and integration test suite
 check: lint format-check type-check config-check test ## Run the complete local quality gate
 
 mlflow-ui: ## Open the local MLflow tracking UI
-	$(PYTHON) -m mlflow ui --backend-store-uri sqlite:///mlflow.db
+	$(PYTHON) -m mlflow ui --backend-store-uri sqlite:///mlflow.db --workers 1
 
 experiment-backup: ## Archive and verify the local MLflow database and artifacts
 	$(PYTHON) scripts/archive_experiments.py

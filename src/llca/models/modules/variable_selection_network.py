@@ -19,8 +19,8 @@ class VariableSelectionNetwork(nn.Module):
         self,
         num_vars: int,
         embedding_dim: int,
+        dropout: float,
         context_size: int | None = None,
-        dropout: float = 0.0,
     ) -> None:
         super().__init__()
         self.num_vars = num_vars
@@ -28,16 +28,16 @@ class VariableSelectionNetwork(nn.Module):
         self.weight_grn = GatedResidualNetwork(
             input_size=num_vars * embedding_dim,
             hidden_size=embedding_dim,
+            dropout=dropout,
             output_size=num_vars,
             context_size=context_size,
-            dropout=dropout,
         )
         self.variable_grns = nn.ModuleList(
             GatedResidualNetwork(
                 input_size=embedding_dim,
                 hidden_size=embedding_dim,
-                output_size=embedding_dim,
                 dropout=dropout,
+                output_size=embedding_dim,
             )
             for _ in range(num_vars)
         )

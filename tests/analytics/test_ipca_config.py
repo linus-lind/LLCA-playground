@@ -67,7 +67,7 @@ class IpcaHydraConfigurationTest(unittest.TestCase):
         self.assertNotIn("primary_dataset", ipca.inputs)
         self.assertEqual(ipca.inputs.returns.dataset, "asset_returns")
         self.assertEqual(ipca.inputs.returns.return_type, "simple")
-        self.assertEqual(ipca.inputs.returns.realization_lag, 2)
+        self.assertEqual(ipca.inputs.returns.realization_lag, 1)
         self.assertTrue(ipca.inputs.returns.excess)
         self.assertEqual(ipca.inputs.characteristics.dataset, "firm_characteristics")
         self.assertNotIn("columns", ipca.inputs.characteristics)
@@ -79,7 +79,7 @@ class IpcaHydraConfigurationTest(unittest.TestCase):
         self.assertIn("asset_returns", cfg.data.datasets)
         self.assertIn("asset_returns", cfg.preprocessing)
         self.assertEqual(cfg.features.asset_returns[0].name, "simple_change")
-        self.assertEqual(cfg.features.asset_returns[0].shift, -2)
+        self.assertEqual(cfg.features.asset_returns[0].shift, -1)
         self.assertGreater(len(cfg.features.firm_characteristics), ipca.n_factors)
 
     def test_ipca_factor_count_cannot_exceed_characteristics_plus_constant(self) -> None:
@@ -143,7 +143,7 @@ class IpcaHydraConfigurationTest(unittest.TestCase):
 
         self.assertNotIn("datasets", cfg.analytics)
         self.assertNotIn("index", cfg.analytics)
-        self.assertEqual(cfg.analytics.return_realization_lag, 2)
+        self.assertEqual(cfg.analytics.return_realization_lag, 1)
         self.assertEqual(cfg.analytics.risk_free.dataset, "fama_french")
         self.assertEqual(cfg.analytics.risk_free.column, "rf")
         factors = cfg.analytics.factor_analysis.factors
@@ -161,7 +161,7 @@ class IpcaHydraConfigurationTest(unittest.TestCase):
         self.assertIn("fama_french", cfg.features)
         factor_features = {str(spec.get("as")): spec for spec in cfg.features.fama_french}
         for column in [*factors.ff6, cfg.analytics.risk_free.column]:
-            self.assertEqual(factor_features[str(column)].shift, -2)
+            self.assertEqual(factor_features[str(column)].shift, -1)
         timing_features = {str(spec.get("as")): spec for spec in cfg.features.macro}
         for column in timing.columns:
             self.assertIsNone(timing_features[str(column)].get("shift"))
@@ -232,7 +232,7 @@ class IpcaHydraConfigurationTest(unittest.TestCase):
 
     def test_rejects_factor_output_not_aligned_to_global_realization_lag(self) -> None:
         cfg = _analytics_config()
-        cfg.features.fama_french[0].shift = -1
+        cfg.features.fama_french[0].shift = -2
 
         with self.assertRaisesRegex(
             ConfigValidationError, "match analytics.return_realization_lag"
@@ -268,14 +268,14 @@ class IpcaHydraConfigurationTest(unittest.TestCase):
     def test_rejects_return_type_or_lag_inconsistent_with_feature(self) -> None:
         cfg = _analytics_config()
         cfg.analytics.factor_analysis.ipca.inputs.returns.return_type = "log"
-        cfg.analytics.factor_analysis.ipca.inputs.returns.realization_lag = 1
+        cfg.analytics.factor_analysis.ipca.inputs.returns.realization_lag = 2
 
         with self.assertRaises(ConfigValidationError) as raised:
             validate_analytics_config(cfg)
 
         message = str(raised.exception)
         self.assertIn("must use 'log_change'", message)
-        self.assertIn("must set shift to -1", message)
+        self.assertIn("must set shift to -2", message)
 
     def test_rejects_staleness_override_for_unknown_characteristic(self) -> None:
         cfg = _analytics_config()

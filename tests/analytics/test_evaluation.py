@@ -97,6 +97,7 @@ class PredictionEvaluationTest(unittest.TestCase):
             {
                 "loss",
                 "mean_return",
+                "cash_return",
                 "variance",
                 "turnover",
                 "cost",
@@ -145,7 +146,7 @@ class PredictionEvaluationTest(unittest.TestCase):
 
         def adapter(
             output: PredictionOutput, target: pd.Series
-        ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, pd.Index]:
             nonlocal calls
             calls += 1
             assert isinstance(output.values, pd.Series)
@@ -156,6 +157,7 @@ class PredictionEvaluationTest(unittest.TestCase):
                 torch.from_numpy(scores.fillna(0.0).to_numpy(dtype=np.float32)),
                 torch.from_numpy(outcomes.fillna(0.0).to_numpy(dtype=np.float32)),
                 torch.from_numpy(valid.to_numpy(dtype=bool)),
+                scores.index,
             )
 
         evaluation = evaluate_predictions(
@@ -172,6 +174,56 @@ class PredictionEvaluationTest(unittest.TestCase):
         self.assertEqual(calls, 1)
         self.assertIn("loss", evaluation.objective_metrics)
         self.assertEqual(len(evaluation.portfolio.daily), 3)
+
+    def test_objective_adapter_funds_a_portfolio_objective_with_risk_free(self) -> None:
+        # A portfolio objective reached through a custom adapter must be funded with the same
+        # per-date rate as the panel path, using the date axis the adapter now returns;
+        # otherwise a weights-emitting model's residual cash would silently earn zero. Under
+        # market-neutral normalization the residual cash weight is ~1, so the funded cash
+        # return tracks the rate directly.
+        predictions = PredictionOutput(
+            kind="portfolio",
+            values=pd.Series(
+                [0.6, -0.4, 0.5, -0.5, 0.4, -0.6],
+                index=self.index,
+                name="score",
+            ),
+        )
+
+        def adapter(
+            output: PredictionOutput, target: pd.Series
+        ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, pd.Index]:
+            assert isinstance(output.values, pd.Series)
+            scores = output.values.unstack("instrument")
+            outcomes = target.unstack("instrument").reindex_like(scores)
+            valid = scores.notna() & outcomes.notna()
+            return (
+                torch.from_numpy(scores.fillna(0.0).to_numpy(dtype=np.float32)),
+                torch.from_numpy(outcomes.fillna(0.0).to_numpy(dtype=np.float32)),
+                torch.from_numpy(valid.to_numpy(dtype=bool)),
+                scores.index,
+            )
+
+        dates = self.index.get_level_values("date").unique()
+
+        def funded_metrics(rate: float) -> dict[str, float]:
+            return evaluate_predictions(
+                predictions,
+                _supervision(self.index),
+                "fwd_return",
+                self.objective,
+                _config(),
+                pd.Series(rate, index=dates),
+                objective_layout="rows",
+                objective_adapter=adapter,
+            ).objective_metrics
+
+        zero = funded_metrics(0.0)
+        funded = funded_metrics(0.02)
+        self.assertAlmostEqual(zero["cash_return"], 0.0, places=6)
+        self.assertAlmostEqual(funded["cash_return"], 0.02, places=5)
+        # The funded rate flows through to the cash-inclusive gross mean return.
+        self.assertAlmostEqual(funded["mean_return"] - zero["mean_return"], 0.02, places=5)
 
     def test_predictions_without_allocation_contract_are_rejected(self) -> None:
         allocations = pd.Series(

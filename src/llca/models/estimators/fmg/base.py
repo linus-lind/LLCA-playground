@@ -25,36 +25,29 @@ from llca.models.estimators.prediction import (
 from llca.models.estimators.torch import TorchTrainableEstimator
 from llca.models.fmg.base import FmgLocalModel
 from llca.models.modules.conv_layer import ConvLayer
+from llca.models.modules.temporal_cnn import temporal_buffer_size
 from llca.models.utils.batching import Batch, Field, Window, build_batches
+from llca.models.utils.ewma_standardizer import EwmaStandardizer
 from llca.models.utils.sequences import SequenceInput, WindowedTensor, build_sequences
-from llca.models.utils.standardizer import Standardizer
 from llca.training.modules.training_config import TrainingConfig
 from llca.training.modules.training_task import TrainingTask
 
-_BUNDLE_FORMAT_VERSION = 1
-_VERSION_ONLY_BUNDLE_FORMAT = 2
-_BUNDLE_FIELDS = {
-    "format_version",
-    "config",
-    "feature_columns",
-    "context_columns",
-    "model_state_dict",
-    "feature_scaler",
-    "context_scaler",
-    "prediction_kind",
-}
+_BUNDLE_FORMAT_VERSION = 3
 
 
 def _validate_bundle_format(payload: dict[str, Any], model_name: str) -> None:
-    """Accept the retired version-only revision only for the exact known payload shape."""
+    """Reject any bundle this estimator revision cannot restore.
+
+    Only the current format carries the stateful feature normalizer under ``feature_ewma``
+    that :meth:`FmgEstimator._restore` requires. Earlier revisions persisted fitted scalers
+    under keys that no longer describe restorable state, so they are rejected outright rather
+    than accepted and left to fail deep inside restoration.
+    """
     version = payload.get("format_version")
-    if version == _BUNDLE_FORMAT_VERSION:
-        return
-    if version == _VERSION_ONLY_BUNDLE_FORMAT and set(payload) == _BUNDLE_FIELDS:
-        return
-    raise ValueError(
-        f"unsupported {model_name} bundle format {version!r}; expected {_BUNDLE_FORMAT_VERSION}"
-    )
+    if version != _BUNDLE_FORMAT_VERSION:
+        raise ValueError(
+            f"unsupported {model_name} bundle format {version!r}; expected {_BUNDLE_FORMAT_VERSION}"
+        )
 
 
 def conv_layer_from_config(layer: DictConfig) -> ConvLayer:
@@ -71,23 +64,31 @@ class RawWindows:
     The target-level ``starts``, context, supervision, and index contain ``R`` usable
     prediction rows. Feature values and ages remain compact unfiltered ``[R_raw, F]``
     history buffers because filtered target rows may still be required as past inputs.
+    ``risk_free`` holds the date-level risk-free return broadcast to each usable row, or
+    ``None`` when the objective needs no cash funding.
     """
 
     features: WindowedTensor
     context: tuple[Tensor, Tensor]
     supervision: Tensor
     index: pd.MultiIndex
+    risk_free: Tensor | None
 
 
 @dataclass(frozen=True, slots=True)
 class PreparedWindows:
-    """Hold scaled lazy inputs, device targets, and precomputed date-block batches."""
+    """Hold scaled lazy inputs, device targets, and precomputed date-block batches.
+
+    ``risk_free`` mirrors ``supervision``: the per-row risk-free return on the execution
+    device, or ``None`` when no risk-free dataset is bound.
+    """
 
     features: Window
     context: Field
     supervision: Tensor
     index: pd.MultiIndex
     batches: list[Batch]
+    risk_free: Tensor | None
 
 
 class FmgEstimator(TorchTrainableEstimator[Batch]):
@@ -119,16 +120,19 @@ class FmgEstimator(TorchTrainableEstimator[Batch]):
         )
         self._supervision_dataset = str(config.supervision.dataset)
         self._supervision_column = str(config.supervision.column)
+        risk_free = config.get("risk_free")
+        self._risk_free_dataset = None if risk_free is None else str(risk_free.dataset)
+        self._risk_free_column = None if risk_free is None else str(risk_free.column)
 
         self._device = device if device is not None else torch.device("cpu")
         self._gradient_checkpointing = False
         self._score_saturation_threshold = 0.95
         self._sequence_length = config.sequence_length
+        self._half_life = float(config.standardization.half_life)
         self._feature_columns: list[str] = []
         self._context_columns: list[str] = []
         self._model: FmgLocalModel | None = None
-        self._feature_scaler: Standardizer | None = None
-        self._context_scaler: Standardizer | None = None
+        self._feature_ewma: EwmaStandardizer | None = None
 
     @abstractmethod
     def _build_model(self) -> FmgLocalModel:
@@ -147,11 +151,11 @@ class FmgEstimator(TorchTrainableEstimator[Batch]):
             raise RuntimeError(f"{self._MODEL_NAME} is not fitted")
         return self._model
 
-    def _require_scalers(self) -> tuple[Standardizer, Standardizer]:
-        """Return fitted preprocessing state or reject premature inference/serialization."""
-        if self._feature_scaler is None or self._context_scaler is None:
+    def _require_feature_ewma(self) -> EwmaStandardizer:
+        """Return the fitted stock-feature normalizer or reject premature use."""
+        if self._feature_ewma is None:
             raise RuntimeError(f"{self._MODEL_NAME} preprocessing state is not fitted")
-        return self._feature_scaler, self._context_scaler
+        return self._feature_ewma
 
     def _combined(self, split: MaskedPanels) -> MaskedPanel:
         """Align configured feature and context datasets into one sequence-building panel.
@@ -159,6 +163,13 @@ class FmgEstimator(TorchTrainableEstimator[Batch]):
         Values, observation masks, and ages are concatenated column-wise on their shared
         panel index. Segments come from the feature dataset because they define which rows
         may form a continuous temporal sequence.
+
+        The feature dataset's values are causally EWMA-standardized here, per entity and
+        per column, advancing the fitted normalizer's state as a side effect (see
+        :class:`~llca.models.utils.ewma_standardizer.EwmaStandardizer`). Context dataset
+        values (firm characteristics, macro) pass through exactly as preprocessing produced
+        them: their raw magnitude is treated as informative on its own, not as noise to
+        remove, and it is left for the model's context-conditioning pathway to use directly.
         """
         names = [self._feature_dataset_name, *self._context_dataset_names]
         parts = [split[name] for name in names]
@@ -177,8 +188,10 @@ class FmgEstimator(TorchTrainableEstimator[Batch]):
         duplicates = sorted({column for column in columns if columns.count(column) > 1})
         if duplicates:
             raise ValueError(f"model input columns must be unique across datasets: {duplicates}")
+        standardized_features = self._require_feature_ewma().transform(parts[0])
+        values = [standardized_features, *(part.values for part in parts[1:])]
         return MaskedPanel(
-            values=pd.concat([part.values for part in parts], axis=1),
+            values=pd.concat(values, axis=1),
             observed=pd.concat([part.observed for part in parts], axis=1),
             age=pd.concat([part.age for part in parts], axis=1),
             segment=split[self._feature_dataset_name].segment,
@@ -195,6 +208,55 @@ class FmgEstimator(TorchTrainableEstimator[Batch]):
             .to_numpy(dtype=bool)
         )
         return torch.from_numpy(values).float(), torch.from_numpy(observed)
+
+    def _risk_free(self, split: MaskedPanels, index: pd.MultiIndex) -> tuple[Tensor, Tensor] | None:
+        """Align the bound date-level risk-free return and its availability to ``index``.
+
+        Returns ``None`` when no ``model.risk_free`` dataset is configured. Otherwise the
+        date-level rate is broadcast (by the alignment stage) to each ``(date, entity)`` row,
+        so the objective can later read one rate per date without materializing a distinct
+        per-asset series.
+        """
+        if self._risk_free_dataset is None or self._risk_free_column is None:
+            return None
+        panel = split[self._risk_free_dataset]
+        if self._risk_free_column not in panel.values.columns:
+            raise ValueError(
+                f"risk-free column '{self._risk_free_column}' is absent from dataset "
+                f"'{self._risk_free_dataset}'"
+            )
+        values = panel.values[self._risk_free_column].reindex(index).to_numpy(dtype=float)
+        observed = (
+            panel.observed[self._risk_free_column].reindex(index).fillna(False).to_numpy(dtype=bool)
+        )
+        return torch.from_numpy(values).float(), torch.from_numpy(observed)
+
+    def _kept_risk_free(
+        self, split: MaskedPanels, index: pd.MultiIndex, keep: Tensor
+    ) -> Tensor | None:
+        """Return the risk-free rate on the retained rows, failing if any is unavailable.
+
+        A scored date without an observed, finite risk-free return is a hard error rather
+        than a silently dropped date: the portfolio objective must fund residual cash on
+        every date it optimizes. Returns ``None`` when no risk-free dataset is bound or when
+        the objective is not a portfolio objective (a pointwise loss such as MSE takes no
+        risk-free rate even if the model configuration happens to declare one).
+        """
+        if self._prediction_kind != "portfolio":
+            return None
+        fetched = self._risk_free(split, index)
+        if fetched is None:
+            return None
+        values, observed = fetched
+        missing = keep & ~(observed & torch.isfinite(values))
+        if bool(missing.any().item()):
+            first = index[missing.numpy()].get_level_values(0)[0]
+            raise ValueError(
+                f"risk-free '{self._risk_free_dataset}.{self._risk_free_column}' is missing "
+                f"on {int(missing.sum().item())} scored row(s) starting {first}; portfolio "
+                "training requires a risk-free return on every scored date"
+            )
+        return values[keep]
 
     def _windows(self, split: MaskedPanels) -> RawWindows:
         """Build lazy causal inputs and retain only rows with usable supervision.
@@ -225,34 +287,39 @@ class FmgEstimator(TorchTrainableEstimator[Batch]):
             context=(context_values[keep], context_age[keep]),
             supervision=supervision[keep],
             index=index[keep_np],
+            risk_free=self._kept_risk_free(split, index, keep),
         )
 
     def _to_windows(self, raw: RawWindows, batch_size: int) -> PreparedWindows | None:
-        """Scale raw inputs, assign transfer devices, and group target rows by date."""
-        feature_scaler, context_scaler = self._require_scalers()
+        """Assign transfer devices and group target rows by date.
+
+        Values arrive already standardized (features causally, via ``_combined``) or
+        intentionally raw (context), so no scaling happens at this tensor stage.
+        """
         if len(raw.index) == 0:
             return None
         return PreparedWindows(
-            features=self._windowed_field(raw.features, feature_scaler),
-            context=self._field(raw.context, context_scaler),
+            features=self._windowed_field(raw.features),
+            context=self._field(raw.context),
             supervision=raw.supervision.to(self._device),
             index=raw.index,
             batches=build_batches(raw.index, batch_size),
+            risk_free=None if raw.risk_free is None else raw.risk_free.to(self._device),
         )
 
-    def _field(self, pair: tuple[Tensor, Tensor], scaler: Standardizer) -> Field:
-        """Scale a point-in-time ``[R, C]`` pair and attach lazy device transfer."""
+    def _field(self, pair: tuple[Tensor, Tensor]) -> Field:
+        """Attach lazy device transfer to an already-prepared point-in-time ``[R, C]`` pair."""
         values, age = pair
         return Field(
-            values=scaler.transform(values),
+            values=values,
             age=age,
             device=self._device,
         )
 
-    def _windowed_field(self, raw: WindowedTensor, scaler: Standardizer) -> Window:
-        """Scale compact ``[R_raw, F]`` buffers while retaining lazy window offsets."""
+    def _windowed_field(self, raw: WindowedTensor) -> Window:
+        """Attach lazy device transfer to an already-prepared compact ``[R_raw, F]`` buffer."""
         return Window(
-            values=scaler.transform(raw.values),
+            values=raw.values,
             age=raw.age,
             starts=raw.starts,
             window=raw.window,
@@ -284,11 +351,18 @@ class FmgEstimator(TorchTrainableEstimator[Batch]):
         """Prepare FMG-specific panel data and steps for the reusable trainer.
 
         Column contracts are inferred from the training split before model construction.
-        Standardizers are fitted only on training inputs; validation uses those same
-        statistics. Optimization and execution policy remain outside the estimator.
+        The stock-feature EWMA normalizer is initialized from training inputs only, then
+        advanced causally and continuously through training and (when present) validation
+        rows as they are windowed below -- validation never refits it. Optimization and
+        execution policy remain outside the estimator.
         """
         if self._loss is None:
             raise ValueError(f"{self._MODEL_NAME} training requires an objective")
+        if self._prediction_kind == "portfolio" and self._risk_free_dataset is None:
+            raise ValueError(
+                f"{self._MODEL_NAME} portfolio training requires a model.risk_free binding "
+                "(dataset and column) so residual cash earns the risk-free rate"
+            )
         self._device = device
         self._gradient_checkpointing = training.gradient_checkpointing
         self._score_saturation_threshold = float(
@@ -301,11 +375,21 @@ class FmgEstimator(TorchTrainableEstimator[Batch]):
         self._model = self._build_model().to(self._device)
         self._loss = self._loss.to(self._device)
 
+        # Built fresh every call (see docstring): _build_training_task always runs before
+        # the trainer's optimizer loop, including on a checkpoint resume, so refitting here
+        # is idempotent -- it reproduces the same deterministic recursion from scratch.
+        # history_buffer is sized to required_history (not just the CNN buffer) so any
+        # caller requesting up to a full causal window's worth of already-advanced history
+        # -- this pipeline's analytics evaluation does, and callers may predict more than
+        # once -- can always replay it instead of hitting the buffer's error path.
+        self._feature_ewma = EwmaStandardizer(
+            half_life=self._half_life, history_buffer=self.required_history
+        )
+        self._feature_ewma.fit(train[self._feature_dataset_name])
+
         raw = self._windows(train)
         if len(raw.index) == 0:
             raise ValueError("training split produced no usable sequences")
-        self._feature_scaler = Standardizer.fit(raw.features.values)
-        self._context_scaler = Standardizer.fit(raw.context[0])
         train_windows = self._to_windows(raw, training.batch_size)
         if train_windows is None:
             raise RuntimeError("training windows disappeared after preprocessing")
@@ -334,11 +418,24 @@ class FmgEstimator(TorchTrainableEstimator[Batch]):
             ),
         )
 
+    def _temporal_buffer(self) -> int:
+        """Rows the causal CNN consumes, resolved from config so it is valid before fitting.
+
+        A built network reports it directly; before construction the same figure is derived
+        from the convolution layer specification, so ``required_history`` (and the split
+        lookback derived from it) is correct whether or not the network exists yet.
+        """
+        if self._model is not None:
+            return int(self._model.buffer_size)
+        cnn = self._config.get("cnn")
+        if cnn is None:
+            return 0
+        return temporal_buffer_size([conv_layer_from_config(layer) for layer in cnn.layers])
+
     @property
     def required_history(self) -> int:
         """Cover the temporal feature window plus rows consumed by causal CNN kernels."""
-        buffer = self._model.buffer_size if self._model is not None else 0
-        return int(self._sequence_length) + int(buffer)
+        return int(self._sequence_length) + self._temporal_buffer()
 
     @property
     def evaluation_spec(self) -> EvaluationSpec:
@@ -350,7 +447,7 @@ class FmgEstimator(TorchTrainableEstimator[Batch]):
         )
 
     def to_device(self, device: torch.device) -> None:
-        """Move the fitted network and objective while keeping CPU-backed input scalers."""
+        """Move the fitted network and objective; the numpy-backed EWMA state stays put."""
         self._device = device
         if self._model is not None:
             self._model = self._model.to(device)
@@ -358,17 +455,22 @@ class FmgEstimator(TorchTrainableEstimator[Batch]):
             self._loss = self._loss.to(device)
 
     def _inference_payload(self) -> dict[str, Any]:
-        """Package architecture, weights, column order, and scalers for inference."""
+        """Package architecture, weights, column order, and normalizer state for inference.
+
+        The feature EWMA's state captures wherever the causal recursion last stopped (end
+        of validation at first save, potentially further advanced on a later save), so a
+        reloaded estimator's ``predict`` continues normalizing exactly where this one left
+        off. Context (firm characteristics, macro) carries no preprocessing state to persist.
+        """
         model = self._require_model()
-        feature_scaler, context_scaler = self._require_scalers()
+        feature_ewma = self._require_feature_ewma()
         return {
             "format_version": _BUNDLE_FORMAT_VERSION,
             "config": OmegaConf.to_container(self._config, resolve=True),
             "feature_columns": list(self._feature_columns),
             "context_columns": list(self._context_columns),
             "model_state_dict": model.state_dict(),
-            "feature_scaler": feature_scaler.state_dict(),
-            "context_scaler": context_scaler.state_dict(),
+            "feature_ewma": feature_ewma.state_dict(),
             "prediction_kind": self._prediction_kind,
         }
 
@@ -390,7 +492,6 @@ class FmgEstimator(TorchTrainableEstimator[Batch]):
         self._context_columns = list(payload["context_columns"])
         self._model = self._build_model().to(self._device)
         self._model.load_state_dict(payload["model_state_dict"])
-        self._feature_scaler = Standardizer.from_state_dict(payload["feature_scaler"], device="cpu")
-        self._context_scaler = Standardizer.from_state_dict(payload["context_scaler"], device="cpu")
+        self._feature_ewma = EwmaStandardizer.from_state_dict(payload["feature_ewma"])
         if self._loss is not None:
             self._loss = self._loss.to(self._device)

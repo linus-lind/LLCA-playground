@@ -80,7 +80,7 @@ class ReportingTableTest(unittest.TestCase):
         self.assertFalse(any("p-value" in str(label) for label in table.frame.index))
         display = _formatted_frame(table)
         self.assertIn("(***)", str(display.loc["Estimate", "A"]))
-        self.assertNotIn("(", str(display.loc["Estimate", "B"]))
+        self.assertIn("(ns)", str(display.loc["Estimate", "B"]))
 
     def test_csv_export_preserves_inline_significance_markers(self) -> None:
         source = pd.DataFrame({"estimate": [0.25]}, index=["A"])

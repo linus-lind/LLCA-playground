@@ -1,0 +1,7 @@
+# @package _global_
+defaults:
+  - override /model: "inverse-volatility"
+  - override /loss: "portfolio"
+  - override /training: "sklearn"
+
+experiment_name: "inverse-volatility-baseline"

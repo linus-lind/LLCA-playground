@@ -21,20 +21,13 @@ from llca.training.modules.sklearn_config import SklearnTrainingConfig
 
 
 class BaselineEstimator(TabularEstimator):
-    """Non-learning baseline whose fit only records the reproducibility seed.
-
-    The score is a deterministic function of the live ``(date, entity)`` universe, so the
-    analytics comparison constructs weights from it with the same objective normalization as
-    any trained model. Concrete baselines implement ``_scores`` over the live universe.
-    """
-
     def __init__(self, config: DictConfig, prediction_kind: PredictionKind = "portfolio") -> None:
         super().__init__(config, prediction_kind)
         self._seed = 0
 
     @abstractmethod
-    def _scores(self, live_index: pd.Index) -> pd.Series:
-        """Return one score per live ``(date, entity)`` row."""
+    def _scores(self, split: MaskedPanels, live_index: pd.Index) -> pd.Series:
+        """Return one score per live ``(date, entity)`` row, using ``split`` when needed."""
 
     def _fit_backend(
         self,
@@ -52,7 +45,7 @@ class BaselineEstimator(TabularEstimator):
         if len(index) == 0:
             raise ValueError(f"{self._MODEL_NAME} found no live universe rows to score")
         return PredictionOutput(
-            kind=self._prediction_kind, values=self._scores(index).astype(float)
+            kind=self._prediction_kind, values=self._scores(test, index).astype(float)
         )
 
     def _inference_payload(self) -> dict[str, Any]:
@@ -80,17 +73,41 @@ class EqualWeightEstimator(BaselineEstimator):
     _BUNDLE_ARTIFACT = "equal-weight_bundle"
     _BUNDLE_FILENAME = "equal-weight.pkl"
 
-    def _scores(self, live_index: pd.Index) -> pd.Series:
+    def _scores(self, split: MaskedPanels, live_index: pd.Index) -> pd.Series:
+        del split
         return pd.Series(1.0, index=live_index, name="score")
 
 
-class RandomLongShortEstimator(BaselineEstimator):
-    """Assign seeded standard-normal scores so normalization yields a random long-short book."""
+class InverseVolatilityEstimator(BaselineEstimator):
+    """Weight each live asset by the reciprocal of a configured realized-volatility feature.
 
-    _MODEL_NAME = "random-long-short"
-    _BUNDLE_ARTIFACT = "random-long-short_bundle"
-    _BUNDLE_FILENAME = "random-long-short.pkl"
+    The score ``1 / max(volatility, floor)`` is normalized cross-sectionally by the objective,
+    yielding a long-only inverse-volatility portfolio. Only rows carrying a
+    finite positive volatility are eligible, so warmup rows without a volatility estimate are
+    excluded from the universe rather than assigned an undefined weight.
+    """
 
-    def _scores(self, live_index: pd.Index) -> pd.Series:
-        generator = np.random.default_rng(self._seed)
-        return pd.Series(generator.standard_normal(len(live_index)), index=live_index, name="score")
+    _MODEL_NAME = "inverse-volatility"
+    _BUNDLE_ARTIFACT = "inverse-volatility_bundle"
+    _BUNDLE_FILENAME = "inverse-volatility.pkl"
+
+    def __init__(self, config: DictConfig, prediction_kind: PredictionKind = "portfolio") -> None:
+        super().__init__(config, prediction_kind)
+        volatility = config.volatility
+        self._volatility_dataset = str(volatility.dataset)
+        self._volatility_column = str(volatility.column)
+        self._volatility_floor = float(volatility.get("floor", 1e-6))
+
+    def _volatility(self, split: MaskedPanels) -> pd.Series:
+        return split[self._volatility_dataset].values[self._volatility_column]
+
+    def _live_rows(self, split: MaskedPanels) -> pd.Series:
+        live = super()._live_rows(split)
+        volatility = self._volatility(split).reindex(live.index).to_numpy(dtype=float)
+        eligible = pd.Series(np.isfinite(volatility) & (volatility > 0.0), index=live.index)
+        return live & eligible
+
+    def _scores(self, split: MaskedPanels, live_index: pd.Index) -> pd.Series:
+        volatility = self._volatility(split).reindex(live_index).to_numpy(dtype=float)
+        inverse = 1.0 / np.maximum(volatility, self._volatility_floor)
+        return pd.Series(inverse, index=live_index, name="score")

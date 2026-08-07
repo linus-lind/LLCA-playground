@@ -24,11 +24,12 @@ class ContinuousVariableEncoder(nn.Module):
 
     def forward(self, x: Tensor, age: Tensor) -> Tensor:
         """Return freshness-adjusted embeddings with shape ``[..., V, E]``."""
-        available = (age >= 0).unsqueeze(-1)
+        available = age >= 0
+        safe_x = torch.where(available, x, torch.zeros_like(x))
         gamma = torch.exp(-torch.nn.functional.softplus(self.decay) * age.clamp(min=0.0))
-        decayed = gamma * x
+        decayed = gamma * safe_x
         projected = torch.stack(
             [projection(decayed[..., i : i + 1]) for i, projection in enumerate(self.projections)],
             dim=-2,
         )
-        return torch.where(available, projected, self.missing)
+        return torch.where(available.unsqueeze(-1), projected, self.missing)

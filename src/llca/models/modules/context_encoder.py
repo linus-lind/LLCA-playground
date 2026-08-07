@@ -12,38 +12,41 @@ from llca.models.modules.variable_selection_network import VariableSelectionNetw
 class ContextEncoder(nn.Module):
     """Encode point-in-time variables into named, independently trainable contexts.
 
-    ``context`` and ``age`` have shape ``[..., C]`` with no required time axis. Variable
-    selection reduces them to one ``D``-dimensional representation, from which a separate
-    residual projection is learned for every named downstream consumer. The method
-    returns ``({name: [..., D]}, weights[..., C])``.
+    ``context`` and ``age`` have shape ``[..., C]`` with no required time axis. Each of the
+    ``C`` variables is embedded independently into ``embedding_dim`` (``E``) -- the same
+    cheap per-variable width used by the stock-feature encoder -- so the intermediate
+    representation is ``[..., C, E]`` and never the wider ``[..., C, D]``. Variable
+    selection reduces that to one ``E``-dimensional representation, from which a separate
+    residual refinement is learned for every named downstream consumer. Context is only
+    ever consumed as conditioning by downstream GRNs (which project it into their own
+    hidden width), so it is intentionally never expanded to ``model_dim`` here. The method
+    returns ``({name: [..., E]}, weights[..., C])``.
     """
 
     def __init__(
         self,
         num_context_vars: int,
-        model_dim: int,
+        embedding_dim: int,
         grn_names: Sequence[str],
-        dropout: float = 0.0,
+        dropout: float,
     ) -> None:
         super().__init__()
         if not grn_names:
             raise ValueError("ContextEncoder requires at least one GRN name")
         if len(set(grn_names)) != len(grn_names):
             raise ValueError(f"ContextEncoder GRN names must be unique, got {list(grn_names)}")
-        self.model_dim = model_dim
-        self.encoder = ContinuousVariableEncoder(num_context_vars, model_dim)
-        self.variable_selection = VariableSelectionNetwork(
-            num_context_vars, model_dim, dropout=dropout
-        )
+        self.embedding_dim = embedding_dim
+        self.encoder = ContinuousVariableEncoder(num_context_vars, embedding_dim)
+        self.variable_selection = VariableSelectionNetwork(num_context_vars, embedding_dim, dropout)
         self.context_grns = nn.ModuleDict(
             {
-                name: GatedResidualNetwork(model_dim, model_dim, model_dim, dropout=dropout)
+                name: GatedResidualNetwork(embedding_dim, embedding_dim, dropout, embedding_dim)
                 for name in grn_names
             }
         )
 
     def forward(self, context: Tensor, age: Tensor) -> tuple[dict[str, Tensor], Tensor]:
-        """Return named context embeddings and their variable-selection weights."""
+        """Return named ``[..., E]`` context embeddings and their selection weights."""
         embedded = self.encoder(context, age)
         selected, weights = self.variable_selection(embedded, age)
         contexts: dict[str, Tensor] = {

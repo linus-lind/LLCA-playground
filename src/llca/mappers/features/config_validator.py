@@ -6,6 +6,7 @@ from llca.mappers.config_validation import (
     ConfigField,
     check_fields,
     check_required_columns,
+    is_int,
     register_validator,
 )
 from llca.mappers.features.mapper import feature_registry
@@ -16,6 +17,20 @@ _LOG_CHANGE_FIELDS = [
     ConfigField("skip_missing", "bool", required=False),
 ]
 _SHIFT_FIELDS = [ConfigField("shift", "int", required=False)]
+_WINDOW_FIELDS = [
+    ConfigField("window", "int", required=True, positive=True),
+    ConfigField("min_periods", "int", required=False, positive=True),
+]
+
+
+def _validate_rolling(spec: DictConfig, name: str) -> list[str]:
+    """Validate a trailing-window transform's window length and optional minimum count."""
+    errors = check_fields(spec, f"features.{name}", _WINDOW_FIELDS)
+    window = spec.get("window")
+    min_periods = spec.get("min_periods")
+    if is_int(window) and is_int(min_periods) and min_periods > window:
+        errors.append(f"features.{name}.min_periods must be <= window")
+    return errors
 
 
 @feature_registry.register_validator("log_change")
@@ -26,6 +41,11 @@ def _validate_log_change(spec: DictConfig) -> list[str]:
 @feature_registry.register_validator("simple_change")
 def _validate_simple_change(spec: DictConfig) -> list[str]:
     return check_fields(spec, "features.simple_change", _HORIZON_FIELDS)
+
+
+@feature_registry.register_validator("positive_indicator")
+def _validate_positive_indicator(spec: DictConfig) -> list[str]:
+    return check_fields(spec, "features.positive_indicator", _HORIZON_FIELDS)
 
 
 @feature_registry.register_validator("net_ratio")
@@ -44,6 +64,39 @@ def _validate_net_ratio(spec: DictConfig) -> list[str]:
 @feature_registry.register_validator("cross_sectional_median")
 def _validate_cross_sectional_median(spec: DictConfig) -> list[str]:
     return check_fields(spec, "features.cross_sectional_median", _HORIZON_FIELDS)
+
+
+@feature_registry.register_validator("rolling_volatility")
+def _validate_rolling_volatility(spec: DictConfig) -> list[str]:
+    return _validate_rolling(spec, "rolling_volatility")
+
+
+@feature_registry.register_validator("downside_deviation")
+def _validate_downside_deviation(spec: DictConfig) -> list[str]:
+    return _validate_rolling(spec, "downside_deviation")
+
+
+@feature_registry.register_validator("rolling_skewness")
+def _validate_rolling_skewness(spec: DictConfig) -> list[str]:
+    return _validate_rolling(spec, "rolling_skewness")
+
+
+@feature_registry.register_validator("high_proximity")
+def _validate_high_proximity(spec: DictConfig) -> list[str]:
+    return _validate_rolling(spec, "high_proximity")
+
+
+@feature_registry.register_validator("amihud_illiquidity")
+def _validate_amihud_illiquidity(spec: DictConfig) -> list[str]:
+    errors = _validate_rolling(spec, "amihud_illiquidity")
+    errors.extend(
+        check_fields(
+            spec,
+            "features.amihud_illiquidity",
+            [ConfigField("log", "bool", required=False)],
+        )
+    )
+    return errors
 
 
 @register_validator

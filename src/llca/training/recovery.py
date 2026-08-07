@@ -7,6 +7,7 @@ import json
 import os
 import shutil
 import socket
+import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -165,16 +166,16 @@ class RunLock:
             handle.flush()
         handle.seek(0)
         try:
-            if os.name == "nt":
+            if sys.platform == "win32":
                 import msvcrt
 
                 msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
             else:
                 import fcntl
 
-                fcntl.flock(  # type: ignore[attr-defined]
+                fcntl.flock(
                     handle.fileno(),
-                    fcntl.LOCK_EX | fcntl.LOCK_NB,  # type: ignore[attr-defined]
+                    fcntl.LOCK_EX | fcntl.LOCK_NB,
                 )
         except OSError as exc:
             handle.close()
@@ -194,16 +195,16 @@ class RunLock:
         if handle is None:
             return
         handle.seek(0)
-        if os.name == "nt":
+        if sys.platform == "win32":
             import msvcrt
 
             msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
         else:
             import fcntl
 
-            fcntl.flock(  # type: ignore[attr-defined]
+            fcntl.flock(
                 handle.fileno(),
-                fcntl.LOCK_UN,  # type: ignore[attr-defined]
+                fcntl.LOCK_UN,
             )
         handle.close()
         self._handle = None

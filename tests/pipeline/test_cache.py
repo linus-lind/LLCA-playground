@@ -69,6 +69,43 @@ class PreparationCacheTest(unittest.TestCase):
             )
             self.assertIsNone(load_cached_preparation(root, universe_key))
 
+    def test_key_resolves_interpolations_in_list_preprocessing(self) -> None:
+        # Regression: a top-level ListConfig preprocessing chain with an interpolated
+        # value must resolve before hashing, or two genuinely different runs collide.
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.csv"
+            source.write_text("date,asset,value\n2024-01-01,1,2\n", encoding="utf-8")
+            plan = DataPlan(
+                primary_dataset="values",
+                datasets={"values": DatasetQuery()},
+                csv_chunk_size=10,
+            )
+
+            def key_for(threshold: float) -> str:
+                cfg = OmegaConf.create(
+                    {
+                        "missing_threshold": threshold,
+                        "data": {
+                            "index": {"time": "date", "entity": "asset"},
+                            "datasets": {"values": {"path": "source.csv"}},
+                        },
+                        "preprocessing": [
+                            {
+                                "name": "missing_threshold_filter",
+                                "threshold": "${missing_threshold}",
+                            }
+                        ],
+                        "features": {},
+                        "masking": {},
+                    }
+                )
+                return preparation_cache_key(  # type: ignore[arg-type]
+                    cfg, plan, {"values": source}, data_view="independent"
+                )
+
+            self.assertNotEqual(key_for(0.5), key_for(0.9))
+
 
 if __name__ == "__main__":
     unittest.main()

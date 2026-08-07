@@ -1,16 +1,40 @@
 name: "rf"
+target:
+  entity_id: 53613
 inputs:
   features: "daily_values"
   context:
-    - "firm_characteristics"
     - "macro"
 supervision:
   dataset: "loss"
   column: "fwd_return"
-# Cross-sectional random-forest regressor of the supervision return; its forecast is used
-# as a portfolio score, so the analytics comparison forms weights with the same objective.
-n_estimators: 200
-max_depth: 12
+classification:
+  dataset: "loss"
+  column: "fwd_direction"
+risk_free:
+  dataset: "risk_free"
+  column: "rf"
+
+n_estimators: 500
+criterion: "gini"
+max_depth: 8
+min_samples_split: 20
 min_samples_leaf: 50
+min_weight_fraction_leaf: 0.0
+max_leaf_nodes: null
+min_impurity_decrease: 0.0
 max_features: "sqrt"
+ccp_alpha: 0.0
+max_samples: null
+class_weight: null
 bootstrap: true
+oob_score: false
+monotonic_cst: null
+warm_start: false
+verbose: 0
+
+search_space:
+  max_depth: { type: "choice", values: [4, 8, 12, 20] }
+  min_samples_leaf: { type: "choice", values: [5, 20, 50, 100] }
+  min_samples_split: { type: "choice", values: [2, 20] }
+  max_features: { type: "choice", values: ["sqrt", 0.5] }

@@ -1,0 +1,27 @@
+name: "elastic-net"
+target:
+  entity_id: 53613
+inputs:
+  features: "daily_values"
+  context:
+    - "macro"
+supervision:
+  dataset: "loss"
+  column: "fwd_return"
+classification:
+  dataset: "loss"
+  column: "fwd_direction"
+risk_free:
+  dataset: "risk_free"
+  column: "rf"
+
+C: 1.0
+l1_ratio: 0.5
+class_weight: null
+fit_intercept: true
+max_iter: 5000
+tol: 0.0001
+
+search_space:
+  C: { type: "log_range", low: 1.0e-4, high: 1.0e2, num: 13 }
+  l1_ratio: { type: "choice", values: [0.0, 0.1, 0.3, 0.5, 0.7, 0.9, 1.0] }

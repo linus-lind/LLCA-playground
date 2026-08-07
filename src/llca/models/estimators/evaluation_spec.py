@@ -10,7 +10,9 @@ from torch import Tensor
 from llca.models.estimators.prediction import PredictionOutput
 
 type ObjectiveLayout = Literal["panel", "rows"]
-type ObjectiveTensorAdapter = Callable[[PredictionOutput, pd.Series], tuple[Tensor, Tensor, Tensor]]
+type ObjectiveTensorAdapter = Callable[
+    [PredictionOutput, pd.Series], tuple[Tensor, Tensor, Tensor, pd.Index]
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -21,7 +23,10 @@ class EvaluationSpec:
     identifies the aligned target independently of a concrete model architecture.
     ``objective_layout`` selects a built-in conversion to either dense date-by-entity
     tensors or independent observation rows. Architectures with a different objective
-    contract can provide a pure ``objective_adapter`` without changing analytics code.
+    contract can provide a pure ``objective_adapter`` without changing analytics code; it
+    returns the score/target/valid tensors plus their per-date row axis, so evaluation can
+    align exogenous per-date inputs (such as the risk-free rate) uniformly with the built-in
+    layouts.
     """
 
     primary_dataset: str

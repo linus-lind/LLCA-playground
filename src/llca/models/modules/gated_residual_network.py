@@ -18,9 +18,9 @@ class GatedResidualNetwork(nn.Module):
         self,
         input_size: int,
         hidden_size: int,
+        dropout: float,
         output_size: int | None = None,
         context_size: int | None = None,
-        dropout: float = 0.0,
     ) -> None:
         super().__init__()
         output_size = output_size if output_size is not None else input_size

@@ -2,5 +2,6 @@
 defaults:
   - override /model: "fmg-ctct-2"
   - override /loss: "portfolio"
+  - override /training: "torch"
 
 experiment_name: "fmg-ctct-2"

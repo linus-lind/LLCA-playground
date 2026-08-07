@@ -13,6 +13,7 @@ from torch import Tensor, nn
 
 from llca.analytics.evaluation.portfolio import build_portfolio_evaluation
 from llca.analytics.evaluation.signals import evaluate_signal
+from llca.analytics.inputs.risk_free import align_risk_free
 from llca.analytics.modules.analytics_config import ModelEvaluationConfig
 from llca.analytics.modules.portfolio_evaluation import PortfolioEvaluation
 from llca.analytics.modules.test_evaluation import TestEvaluation
@@ -91,12 +92,13 @@ def _aligned_target(
 def _objective_matrices(
     predictions: pd.Series,
     target: pd.Series,
-) -> tuple[Tensor, Tensor, Tensor]:
+) -> tuple[Tensor, Tensor, Tensor, pd.Index]:
     """Reshape aligned scores and targets into dense date-by-entity tensors for the objective.
 
     A panel is pivoted so rows are dates and columns entities; a date-only series becomes a
     single column. Missing cells are zero-filled and reported through a companion boolean mask
-    marking where both score and target are present. Returns ``(scores, targets, valid)``.
+    marking where both score and target are present. Returns ``(scores, targets, valid, dates)``
+    where ``dates`` is the pivoted row axis, used to align a per-date risk-free rate.
     """
     entity = entity_level(predictions)
     if entity is None:
@@ -110,6 +112,7 @@ def _objective_matrices(
         torch.from_numpy(score_frame.fillna(0.0).to_numpy(dtype=np.float32)),
         torch.from_numpy(target_frame.fillna(0.0).to_numpy(dtype=np.float32)),
         torch.from_numpy(valid.to_numpy(dtype=bool)),
+        score_frame.index,
     )
 
 
@@ -140,27 +143,46 @@ def scalar_objective_metrics(output: object) -> dict[str, float]:
     return metrics
 
 
+def _portfolio_risk_free_tensor(
+    objective: nn.Module, risk_free: pd.Series, dates: pd.Index
+) -> Tensor | None:
+    """Align the per-date risk-free rate for a portfolio objective's recomputation.
+
+    Returns ``None`` for non-portfolio objectives (a pointwise loss such as MSE takes no
+    risk-free rate), so the same aligned rate that funds residual cash in the portfolio
+    accounting also drives the objective metrics, applied exactly once per date.
+    """
+    if not callable(getattr(objective, "normalize_weights", None)):
+        return None
+    aligned = align_risk_free(risk_free, dates)
+    return torch.from_numpy(aligned.to_numpy(dtype=np.float32))
+
+
 def _evaluate_objective_metrics(
     predictions: PredictionOutput,
     target: pd.Series,
     objective: nn.Module,
+    risk_free: pd.Series,
     *,
     layout: ObjectiveLayout,
     adapter: ObjectiveTensorAdapter | None,
 ) -> dict[str, float]:
     """Recompute the training objective on the test predictions and return its metrics.
 
-    The score/target/mask tensors come from an explicit ``adapter`` when supplied, otherwise
-    from the dense panel packing for the ``"panel"`` layout. The objective is run under
-    inference mode and its output reduced to scalar metrics. A ``"row"`` layout without an
-    adapter is unsupported and raises.
+    The score/target/valid tensors and their per-date row axis come from an explicit
+    ``adapter`` when supplied, otherwise from the dense panel packing for the ``"panel"``
+    layout. Because both paths yield ``dates``, a portfolio objective is rerun with the same
+    per-date risk-free rate used by the portfolio accounting -- aligned once, regardless of
+    layout -- so its metrics and the reported returns share one funding convention. The
+    objective is run under inference mode and its output reduced to scalar metrics. A
+    ``"row"`` layout without an adapter is unsupported and raises.
     """
     if adapter is not None:
-        score_tensor, target_tensor, valid_tensor = adapter(predictions, target)
+        score_tensor, target_tensor, valid_tensor, dates = adapter(predictions, target)
     elif layout == "panel":
         if not isinstance(predictions.values, pd.Series) or not is_numeric_dtype(target.dtype):
             raise TypeError("panel objective evaluation requires scalar numerical outputs")
-        score_tensor, target_tensor, valid_tensor = _objective_matrices(
+        score_tensor, target_tensor, valid_tensor, dates = _objective_matrices(
             predictions.values.astype(float),
             target.astype(float),
         )
@@ -169,8 +191,14 @@ def _evaluate_objective_metrics(
             "row-layout objective analytics is not implemented; provide an "
             "EvaluationSpec.objective_adapter to attach that tensor contract"
         )
+    risk_free_tensor = _portfolio_risk_free_tensor(objective, risk_free, dates)
     with torch.inference_mode():
-        output = objective(score_tensor, target_tensor, valid_tensor)
+        if risk_free_tensor is None:
+            output = objective(score_tensor, target_tensor, valid_tensor)
+        else:
+            output = objective(
+                score_tensor, target_tensor, valid_tensor, risk_free=risk_free_tensor
+            )
     return scalar_objective_metrics(output)
 
 
@@ -262,6 +290,7 @@ def _evaluate_portfolio_predictions(
             predictions,
             target,
             objective,
+            risk_free,
             layout=objective_layout,
             adapter=objective_adapter,
         )

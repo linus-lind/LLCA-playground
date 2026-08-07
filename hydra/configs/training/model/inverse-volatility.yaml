@@ -1,0 +1,11 @@
+name: "inverse-volatility"
+inputs:
+  features: "daily_values"
+supervision:
+  dataset: "loss"
+  column: "fwd_return"
+
+volatility:
+  dataset: "daily_values"
+  column: "realized_vol_1m"
+  floor: 1.0e-6

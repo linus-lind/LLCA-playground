@@ -14,7 +14,7 @@ from llca.mappers.model.mapper import model_registry
 from llca.models.estimators.fmg import FmgCtct1Estimator
 from llca.models.fmg import FmgCtct1
 from llca.models.modules.conv_layer import ConvLayer
-from llca.models.utils.standardizer import Standardizer
+from llca.models.utils.ewma_standardizer import EwmaStandardizer
 
 
 def _network() -> FmgCtct1:
@@ -60,6 +60,7 @@ def _estimator_config() -> object:
             "target": {"entity_id": 101},
             "diagnostics": {"score_saturation_threshold": 0.95},
             "inputs": {"features": "features", "context": ["context"]},
+            "standardization": {"half_life": 3.0},
             "cnn": {"layers": [{"out_channels": 2, "kernel_size": [2, 1], "padding": [0, 0]}]},
             "transformer": {"n_heads": 2},
             "supervision": {"dataset": "loss", "column": "fwd_return"},
@@ -115,6 +116,23 @@ def _panels() -> dict[str, MaskedPanel]:
     }
 
 
+def _tail_panels(panels: dict[str, MaskedPanel], dates: int) -> dict[str, MaskedPanel]:
+    """Keep only the most recent ``dates`` unique dates.
+
+    Used for a ``predict()`` panel presented *after* ``_windows`` has already causally
+    advanced the fitted EWMA state through the full fixture: real predict panels only ever
+    need up to ``required_history`` rows of lookback, and the fitted normalizer's bounded
+    replay buffer is sized to exactly that -- re-presenting the whole fixture here would
+    ask it to replay further back than any real caller in this pipeline ever does.
+    """
+    all_dates = panels["features"].values.index.get_level_values("date").unique().sort_values()
+    keep = all_dates[-dates:]
+    return {
+        name: panel.slice_rows(panel.values.index.get_level_values("date").isin(keep))
+        for name, panel in panels.items()
+    }
+
+
 class FmgCtct1NetworkTest(unittest.TestCase):
     def test_only_target_queries_while_all_assets_receive_gradient(self) -> None:
         model = _network()
@@ -143,6 +161,8 @@ class FmgCtct1NetworkTest(unittest.TestCase):
 
         self.assertEqual(allocation.shape, (1,))
         self.assertLessEqual(abs(float(allocation.detach()[0])), 1.0)
+        # Option 1: cross-sectional attention carries no context pathway.
+        self.assertIsNone(model.cross_sectional_attention.grn.context_projection)
         self.assertEqual(shapes["query"], (4, 1, 8))
         self.assertEqual(shapes["keys"], (4, n_assets, 8))
         self.assertEqual(diagnostics["context"].shape, (n_assets, 2))
@@ -168,7 +188,11 @@ class FmgCtct1EstimatorTest(unittest.TestCase):
         estimator._feature_columns = ["x1", "x2"]
         estimator._context_columns = ["c1", "c2"]
         estimator._model = estimator._build_model()
+        estimator._feature_ewma = EwmaStandardizer(
+            half_life=3.0, history_buffer=estimator.required_history
+        )
         panels = _panels()
+        estimator._feature_ewma.fit(panels["features"])
 
         raw = estimator._windows(panels)
         counts = raw.index.to_frame(index=False).groupby("date").size()
@@ -176,8 +200,6 @@ class FmgCtct1EstimatorTest(unittest.TestCase):
         context_only = np.asarray(raw.index.get_level_values("instrument_id") != 101, dtype=bool)
         self.assertTrue(torch.isnan(raw.supervision[torch.from_numpy(context_only)]).all())
 
-        estimator._feature_scaler = Standardizer.fit(raw.features.values)
-        estimator._context_scaler = Standardizer.fit(raw.context[0])
         windows = estimator._to_windows(raw, batch_size=2)
         assert windows is not None
         output = estimator._forward_batch(windows, windows.batches[0])
@@ -185,7 +207,12 @@ class FmgCtct1EstimatorTest(unittest.TestCase):
         output.loss.backward()  # type: ignore[no-untyped-call]
         self.assertIn("allocations/mean", output.diagnostic_metrics())
 
-        prediction = estimator.predict(panels)
+        # predict() sees a tail-only panel: _windows() above already causally advanced the
+        # EWMA through the whole fixture, so predicting on it again is a bounded replay (see
+        # _tail_panels), matching how a real predict panel only ever needs required_history
+        # rows of lookback rather than the estimator's entire training history.
+        predict_panels = _tail_panels(panels, estimator.required_history)
+        prediction = estimator.predict(predict_panels)
         self.assertEqual(prediction.kind, "portfolio")
         self.assertEqual(prediction.values.name, "weight")
         self.assertTrue((prediction.index.get_level_values("instrument_id") == 101).all())
@@ -195,7 +222,7 @@ class FmgCtct1EstimatorTest(unittest.TestCase):
             bundle = Path(tmp) / "fmg-ctct-1.pt"
             estimator._save(bundle)
             restored = FmgCtct1Estimator.load(bundle, torch.device("cpu"))
-            restored_prediction = restored.predict(panels)
+            restored_prediction = restored.predict(predict_panels)
         assert isinstance(prediction.values, pd.Series)
         assert isinstance(restored_prediction.values, pd.Series)
         pd.testing.assert_series_equal(restored_prediction.values, prediction.values)

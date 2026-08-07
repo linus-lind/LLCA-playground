@@ -12,12 +12,21 @@ from llca.splitting.splitter import Splitter
 
 
 class WalkForwardSplitter(Splitter[MaskedPanels]):
-    """Generate fixed-width chronological folds over a shared panel calendar.
+    """Generate fixed-width, end-anchored chronological folds over a shared calendar.
 
     Each fold contains train, purge, validation, purge, and test date ranges. The complete
-    block advances by ``step_size`` dates, so folds may overlap. ``lookback`` rows are
-    prepended to train and validation input slices solely to construct temporal features;
-    recorded evaluation boundaries exclude them.
+    block ``block = train + 2*purge + val + test`` is anchored to the newest observation and
+    earlier folds step **backward** by ``step_size``, so the final fold's last test date is
+    always ``N - 1``. With ``F = (N - block) // step_size + 1`` feasible folds, the fold at
+    chronological index ``i`` (``0`` oldest) begins at::
+
+        train_start(i) = N - block - (F - 1 - i) * step_size
+
+    and its remaining boundaries follow the fixed layout. Folds are yielded oldest-first; any
+    excess observations fall before the oldest fold and are dropped from the beginning, never
+    from the end. ``lookback`` rows are prepended to the train and validation input slices for
+    sequence construction and excluded from the recorded ``Fold`` boundaries. No fold is
+    yielded when the calendar is shorter than ``block``.
     """
 
     @property
@@ -48,17 +57,23 @@ class WalkForwardSplitter(Splitter[MaskedPanels]):
     def split(
         self, panels: MaskedPanels, primary: str
     ) -> Iterator[tuple[Fold, MaskedPanels, MaskedPanels]]:
-        """Yield every complete rolling fold in chronological order."""
+        """Yield every complete rolling fold, oldest first, anchored to the newest date."""
         calendar = panels[primary].values
         dates = pd.DatetimeIndex(calendar.index.get_level_values(time_level(calendar)))
         sorted_dates = dates.unique().sort_values()
         n = len(sorted_dates)
         block_size = self._block_size
 
-        fold_index = 0
-        start = self.lookback
-        while start + block_size <= n:
-            train_end_pos = start + self.train_size - 1
+        if block_size > n:
+            return
+
+        newest_train_start = n - block_size
+        n_folds = newest_train_start // self.step_size + 1
+
+        for fold_index in range(n_folds):
+            offset = (n_folds - 1 - fold_index) * self.step_size
+            train_start_pos = newest_train_start - offset
+            train_end_pos = train_start_pos + self.train_size - 1
             val_start_pos = train_end_pos + self.purge_size + 1
             val_end_pos = val_start_pos + self.val_size - 1
             test_start_pos = val_end_pos + self.purge_size + 1
@@ -66,7 +81,7 @@ class WalkForwardSplitter(Splitter[MaskedPanels]):
 
             fold = Fold(
                 index=fold_index,
-                train_start=sorted_dates[start],
+                train_start=sorted_dates[train_start_pos],
                 train_end=sorted_dates[train_end_pos],
                 val_start=sorted_dates[val_start_pos],
                 val_end=sorted_dates[val_end_pos],
@@ -74,10 +89,11 @@ class WalkForwardSplitter(Splitter[MaskedPanels]):
                 test_end=sorted_dates[test_end_pos],
             )
 
-            train = slice_by_date(panels, sorted_dates[start - self.lookback], fold.train_end)
-            val = slice_by_date(panels, sorted_dates[val_start_pos - self.lookback], fold.val_end)
+            train = slice_by_date(
+                panels, sorted_dates[max(0, train_start_pos - self.lookback)], fold.train_end
+            )
+            val = slice_by_date(
+                panels, sorted_dates[max(0, val_start_pos - self.lookback)], fold.val_end
+            )
 
             yield fold, train, val
-
-            start += self.step_size
-            fold_index += 1

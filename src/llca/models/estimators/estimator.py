@@ -61,8 +61,20 @@ class Estimator[DataT](ABC):
 
     @property
     def required_history(self) -> int:
-        """Number of prior dates inference needs before its first reported prediction."""
+        """Full causal window an inference call replays before it can emit any prediction."""
         return 0
+
+    @property
+    def required_lookback(self) -> int:
+        """History dates prepended before a scored segment so its first row is computable.
+
+        One fewer than :attr:`required_history` (the full causal window): the first scored
+        observation occupies the final position of that window, so only the preceding
+        ``window - 1`` dates are warmup. Splitters prepend exactly this many rows, which keeps
+        the scored evaluation boundaries invariant to a model's history depth. Point-in-time
+        estimators (``required_history == 0``) need none.
+        """
+        return max(self.required_history - 1, 0)
 
     def set_inference_device(self, device: str) -> None:
         """Apply an optional backend-specific inference device selection."""

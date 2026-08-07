@@ -154,6 +154,15 @@ excess net return is the funded portfolio return less the same risk-free rate an
 Headline and rolling Sharpe use that exact daily excess-return series. The same
 decision-aligned risk-free input is used for IPCA excess returns.
 
+The residual-cash-at-risk-free accounting (net exposure, residual cash weight, risky
+contribution, cash contribution, cash-inclusive gross return, and cash-inclusive NAV drift)
+is **not** an analytics-only definition: it lives once in `llca.core.portfolio_accounting`
+and is consumed by both this evaluation and the training objective (`llca.loss.portfolio`),
+so a model is trained to optimise the very same funded return that is reported here. Analytics
+reconstructs the funded return from stored scores, realised returns, and its own causally
+aligned risk-free series, so the risk-free contribution is applied exactly once — the pipeline
+never re-adds cash to a return that already contains it. See [Risk-free funding](../../../docs/RISK_FREE_FUNDING.md).
+
 ## Scores, weights, objective accounting, and costs
 
 Portfolio predictions contain one finite scalar **score** per constructible date/entity row.

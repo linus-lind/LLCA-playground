@@ -94,6 +94,9 @@ class FmgCtct2Estimator(FmgEstimator):
         scores = torch.zeros(n_dates, batch.n_max, device=self._device)
         supervision = torch.zeros(n_dates, batch.n_max, device=self._device)
         mask = torch.zeros(n_dates, batch.n_max, dtype=torch.bool, device=self._device)
+        risk_free = (
+            torch.zeros(n_dates, device=self._device) if windows.risk_free is not None else None
+        )
 
         for position, date_slice in enumerate(batch.dates):
             rows = date_slice.rows
@@ -114,8 +117,14 @@ class FmgCtct2Estimator(FmgEstimator):
             scores[position, cols] = day_scores
             supervision[position, cols] = windows.supervision[rows.to(self._device)]
             mask[position, cols] = True
+            if risk_free is not None:
+                assert windows.risk_free is not None
+                risk_free[position] = windows.risk_free[rows[0].to(self._device)]
 
-        loss_output = objective(scores.float(), supervision.float(), mask)
+        if risk_free is None:
+            loss_output = objective(scores.float(), supervision.float(), mask)
+        else:
+            loss_output = objective(scores.float(), supervision.float(), mask, risk_free=risk_free)
         loss = self._loss_value(loss_output)
         return TrainingBatchOutput(
             loss=loss,
@@ -128,7 +137,7 @@ class FmgCtct2Estimator(FmgEstimator):
     def predict(self, test: MaskedPanels) -> PredictionOutput:
         """Return one native objective score per constructible asset/date row."""
         model = self._require_model()
-        feature_scaler, context_scaler = self._require_scalers()
+        self._require_feature_ewma()
         if not isinstance(model, FmgCtct2):
             raise RuntimeError(f"{self._MODEL_NAME} has incompatible model state")
         model.eval()
@@ -137,8 +146,8 @@ class FmgCtct2Estimator(FmgEstimator):
         )
         features_raw = cast(WindowedTensor, tensors["features"])
         context_val, context_age = cast(tuple[Tensor, Tensor], tensors["context"])
-        features = self._windowed_field(features_raw, feature_scaler)
-        context = self._field((context_val, context_age), context_scaler)
+        features = self._windowed_field(features_raw)
+        context = self._field((context_val, context_age))
 
         dates = index.get_level_values(0)
         scores = np.zeros(len(index), dtype=float)

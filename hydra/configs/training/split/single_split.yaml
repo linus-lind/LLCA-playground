@@ -1,6 +1,9 @@
 name: "single_split"
-train_size: 4250
+train_size: 4284
 val_size: 504
 test_size: 1008
-purge_size: ${model.sequence_length}
-lookback: ${model.sequence_length}
+purge_size: 1
+# lookback (input history prepended to the train/validation slices) is left unset so it defaults
+# to the estimator's required_lookback: 0 for point-in-time baselines, sequence_length + CNN
+# buffer - 1 for temporal models.
+lookback: null

@@ -1,0 +1,3 @@
+# Default: models fit once on the whole outer training window with their baseline
+# hyperparameters. This keeps every existing experiment (neural and baseline) unchanged.
+enabled: false

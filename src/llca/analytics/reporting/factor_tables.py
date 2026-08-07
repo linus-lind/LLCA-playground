@@ -215,7 +215,7 @@ def _coefficient_formats(count: int) -> tuple[NumberFormat, ...]:
 
 _FACTOR_ALPHA_CAPTION = (
     "Annualized alpha, factor loadings, and regression fit. Coefficient stars use "
-    "two-sided HAC p-values: *** p<0.01, ** p<0.05, * p<0.10."
+    "two-sided HAC p-values: *** p<0.01, ** p<0.05, * p<0.10, (ns) not significant."
 )
 
 
@@ -310,7 +310,8 @@ def _timing_panel(analysis: FactorAnalysis) -> PublicationTable:
         title="Conditional Timing",
         caption=(
             "Conditional alpha, factor exposures, timing terms, and regression fit. "
-            "Coefficient stars use two-sided HAC p-values: *** p<0.01, ** p<0.05, * p<0.10."
+            "Coefficient stars use two-sided HAC p-values: "
+            "*** p<0.01, ** p<0.05, * p<0.10, (ns) not significant."
         ),
         columns=coefficient_columns,
         result_for=lambda entry: entry.timing,

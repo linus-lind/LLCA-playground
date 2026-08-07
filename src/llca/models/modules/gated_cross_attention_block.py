@@ -14,27 +14,21 @@ class GatedCrossAttentionBlock(nn.Module):
     ``query[B, Q, D]`` supplies only the representations for which outputs are required;
     ``key_value[B, S, D]`` supplies the full information set they may attend to. Keeping
     these roles separate avoids computing unused query outputs in target-specific models
-    while preserving gradients through every attended context token.
+    while preserving gradients through every attended context token. Static context
+    enrichment is performed upstream in the local encoder, so this block carries no
+    context pathway.
     """
 
-    def __init__(
-        self,
-        d_model: int,
-        n_heads: int,
-        dropout: float,
-        *,
-        context_size: int | None = None,
-    ) -> None:
+    def __init__(self, d_model: int, n_heads: int, dropout: float) -> None:
         super().__init__()
         self.attention = nn.MultiheadAttention(d_model, n_heads, dropout=dropout, batch_first=True)
         self.gate_add_norm = GateAddNorm(d_model, d_model, dropout)
-        self.grn = GatedResidualNetwork(d_model, d_model, d_model, context_size, dropout)
+        self.grn = GatedResidualNetwork(d_model, d_model, dropout, d_model)
 
     def forward(
         self,
         query: Tensor,
         key_value: Tensor,
-        context: Tensor | None = None,
         key_padding_mask: Tensor | None = None,
     ) -> Tensor:
         """Return one refined output for every query token.
@@ -51,9 +45,4 @@ class GatedCrossAttentionBlock(nn.Module):
             need_weights=False,
         )
         gated = self.gate_add_norm(attended, query)
-
-        broadcast_context = None
-        if context is not None:
-            broadcast_context = context.unsqueeze(1).expand(*gated.shape[:-1], context.size(-1))
-
-        return cast(Tensor, self.grn(gated, broadcast_context))
+        return cast(Tensor, self.grn(gated))

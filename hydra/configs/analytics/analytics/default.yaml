@@ -1,18 +1,33 @@
 models:
-  - name: "fmg-ctct-2"
+  - name: "elastic-net-baseline"
     version: 1
-    label: "fmg-ctct-2"
+    label: "elastic-net"
+  - name: "rf-baseline"
+    version: 1
+    label: "random-forest"
+  - name: "equal-weight-baseline"
+    version: 1
+    label: "equal-weight"
+  - name: "inverse-volatility-baseline"
+    version: 1
+    label: "inverse-volatility"
+  - name: "fmg-clstm"
+    version: 1
+    label: "fmg-clstm"
   - name: "fmg-ctt"
     version: 1
     label: "fmg-ctt"
   - name: "fmg-ctct-1"
     version: 1
     label: "fmg-ctct-1"
+  - name: "fmg-ctct-2"
+    version: 1
+    label: "fmg-ctct-2"
 
 device: "auto"
 annualization_periods: 252
-return_type: "log"
-return_realization_lag: 2
+return_type: "simple"
+return_realization_lag: 1
 signal_buckets: 10
 target_threshold: 0.0
 minimum_acceptable_return: 0.0

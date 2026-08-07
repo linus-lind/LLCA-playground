@@ -51,7 +51,7 @@ class TemporalLSTM(nn.Module):
             bidirectional=bidirectional,
         )
         self.gate_add_norm = GateAddNorm(model_dim, model_dim, output_dropout)
-        self.grn = GatedResidualNetwork(model_dim, model_dim, model_dim, dropout=output_dropout)
+        self.grn = GatedResidualNetwork(model_dim, model_dim, output_dropout, model_dim)
 
     def forward(self, sequence: Tensor) -> Tensor:
         """Return the gated top-layer final state as ``[N, D]``."""

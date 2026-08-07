@@ -108,6 +108,7 @@ class FmgCtct1Estimator(FmgSingleAssetEstimator):
             context=(context_values[keep], context_age[keep]),
             supervision=supervision[keep],
             index=index[keep_np],
+            risk_free=self._kept_risk_free(split, index, keep),
         )
 
     def _allocate(
@@ -132,11 +133,7 @@ class FmgCtct1Estimator(FmgSingleAssetEstimator):
     @torch.inference_mode()
     def predict(self, test: MaskedPanels) -> PredictionOutput:
         """Return one final signed allocation per constructible target date."""
-        if (
-            not isinstance(self._model, FmgCtct1)
-            or self._feature_scaler is None
-            or self._context_scaler is None
-        ):
+        if not isinstance(self._model, FmgCtct1) or self._feature_ewma is None:
             raise RuntimeError(f"{self._MODEL_NAME} is not fitted")
         self._model.eval()
         tensors, raw_index = build_sequences(
@@ -145,8 +142,8 @@ class FmgCtct1Estimator(FmgSingleAssetEstimator):
         index = cast(pd.MultiIndex, raw_index)
         features_raw = cast(WindowedTensor, tensors["features"])
         context_val, context_age = cast(tuple[Tensor, Tensor], tensors["context"])
-        features = self._windowed_field(features_raw, self._feature_scaler)
-        context = self._field((context_val, context_age), self._context_scaler)
+        features = self._windowed_field(features_raw)
+        context = self._field((context_val, context_age))
 
         dates = index.get_level_values(0)
         values: list[float] = []

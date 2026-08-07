@@ -16,39 +16,26 @@ from collections.abc import Sequence
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.axes import Axes
-from matplotlib.colors import Colormap, Normalize, to_rgba
+from matplotlib.colors import Normalize
 from matplotlib.figure import Figure
 
 from llca.analytics.comparison import ComparisonMatrix, ModelConfidenceSummary
+from llca.analytics.evaluation.plots import DIVERGING_CMAP, text_color
 from llca.analytics.reporting.figures import style_report_table
 from llca.analytics.stats.statistics import significance_marker_bold
-
-# Blue at the low end, red at the high end (min->max) mapped over each statistic's theoretical
-# range. For p-values (0..1) this puts every significant (small) cell firmly in blue rather
-# than spreading a cluster of tiny values across the map.
-_CMAP: Colormap = plt.get_cmap("RdBu_r").with_extremes(bad="white")
-
-
-def _text_color(color: object) -> str:
-    """Return ``"black"`` or ``"white"``, whichever stays legible on ``color`` as a fill.
-
-    The choice follows the perceived luminance of the background: dark fills take white text,
-    light fills take black.
-    """
-    red, green, blue, _ = to_rgba(color)  # type: ignore[arg-type]
-    luminance = 0.299 * red + 0.587 * green + 0.114 * blue
-    return "black" if luminance > 0.55 else "white"
 
 
 def _cell_text(value: float, is_pvalue: bool) -> str:
     """Format a single heatmap cell.
 
-    P-value cells are shown to three decimals and suffixed with bold significance stars; every
-    other statistic is shown to two decimals.
+    Non-p-value statistics are shown to two decimals. P-value cells are shown to three decimals
+    with their bold significance marker; the marker is dropped onto a second line so the value
+    and its ``(***)``/``(ns)`` suffix never overflow a narrow cell.
     """
-    if is_pvalue:
-        return f"{value:.3f}{significance_marker_bold(value)}"
-    return f"{value:.2f}"
+    if not is_pvalue:
+        return f"{value:.2f}"
+    marker = significance_marker_bold(value)
+    return f"{value:.3f}\n{marker.strip()}" if marker else f"{value:.3f}"
 
 
 def _draw_matrix_panel(axis: Axes, matrix: ComparisonMatrix) -> None:
@@ -65,12 +52,12 @@ def _draw_matrix_panel(axis: Axes, matrix: ComparisonMatrix) -> None:
     norm = Normalize(vmin=matrix.value_range[0], vmax=matrix.value_range[1])
     shown = np.where(keep & np.isfinite(data), data, np.nan)
     masked = np.ma.masked_invalid(shown)
-    axis.imshow(masked, cmap=_CMAP, norm=norm, aspect="equal")
+    axis.imshow(masked, cmap=DIVERGING_CMAP, norm=norm, aspect="equal")
     for i in range(n):
         for j in range(n):
             if not keep[i, j] or not np.isfinite(data[i, j]):
                 continue
-            rgba = _CMAP(norm(data[i, j]))
+            rgba = DIVERGING_CMAP(norm(data[i, j]))
             axis.text(
                 j,
                 i,
@@ -78,7 +65,7 @@ def _draw_matrix_panel(axis: Axes, matrix: ComparisonMatrix) -> None:
                 ha="center",
                 va="center",
                 fontsize=7,
-                color=_text_color(rgba),
+                color=text_color(rgba),
             )
     axis.set_xticks(range(n))
     axis.set_yticks(range(n))

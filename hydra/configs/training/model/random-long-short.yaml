@@ -1,6 +1,0 @@
-name: "random-long-short"
-inputs:
-  features: "daily_values"
-supervision:
-  dataset: "loss"
-  column: "fwd_return"

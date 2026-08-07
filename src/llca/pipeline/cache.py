@@ -11,7 +11,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, cast
 
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig, ListConfig, OmegaConf
 
 from llca.core.paths import PROJECT_ROOT
 from llca.pipeline.contracts import DataPlan
@@ -25,12 +25,20 @@ _CODE_ROOTS = (
     "mappers/features",
     "mappers/preprocessing",
     "mappers/masking",
+    "mappers/modules",
     "pipeline/assembly.py",
+    "pipeline/preparation.py",
 )
 
 
 def _plain(value: object) -> object:
-    if isinstance(value, DictConfig):
+    """Resolve an OmegaConf node to native containers with interpolations applied.
+
+    Both mapping and list config forms are resolved: preprocessing and feature chains may
+    be supplied as a top-level ``ListConfig``, whose interpolated values would otherwise be
+    serialized verbatim (``${...}``) and collide across genuinely different resolved runs.
+    """
+    if isinstance(value, DictConfig | ListConfig):
         return OmegaConf.to_container(value, resolve=True)
     return value
 
